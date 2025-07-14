@@ -11,6 +11,7 @@ import json
 from typing import Dict, Any, List, Optional
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Import the existing search utility
 import sys
@@ -52,46 +53,26 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
         from datetime import datetime
         now = datetime.now()
         current_year = now.year
-        current_month = now.strftime("%B")  # Full month name
         current_date = now.strftime("%Y-%m-%d")
         
         llm = ChatOpenAI(model=config.default_model, temperature=0.1)
         
-        optimization_prompt = f"""You are a search query optimization expert specializing in tennis information.
+        optimization_prompt = f"""Optimize this tennis query for web search.
 
-Your task is to transform user queries into highly effective web search terms that will find the most relevant tennis information.
+CURRENT: {current_date} ({current_year})
+QUERY: "{user_query}"
 
-CURRENT DATE CONTEXT: Today is {current_date} ({current_month} {current_year})
+Transform into effective search terms:
+- Add {current_year} for current/recent queries  
+- Use official tennis terms (ATP, WTA, rankings)
+- Include relevant keywords
+- Remove conversational words
 
-TENNIS SEARCH OPTIMIZATION GUIDELINES:
-1. Use specific tennis terminology and official names
-2. For current/recent queries, add the current year ({current_year}) and relevant time indicators
-3. Add context keywords that help narrow results
-4. Consider official tournament names, ranking systems, player full names
-5. Remove conversational elements and focus on core search intent
-6. Add geographic context when relevant (ATP, WTA, Grand Slams)
-7. For "current" or "latest" queries, use "{current_year}" and "recent" or "latest"
+Examples:
+"Who's the best player?" → "ATP WTA world rankings {current_year} current top tennis players"
+"Recent tournament results" → "latest tennis tournament {current_year} results winner"
 
-EXAMPLES (using current year {current_year}):
-User Query: "Who is the best tennis player right now?"
-Optimized: "ATP WTA world rankings {current_year} current top tennis players"
-
-User Query: "What happened in the last tournament?"
-Optimized: "latest tennis tournament {current_year} results winner champion"
-
-User Query: "Tell me about recent matches"
-Optimized: "recent tennis matches {current_year} results tournament"
-
-User Query: "How is [Player] performing this year?"
-Optimized: "[Player] {current_year} performance ranking wins results"
-
-Original User Query: "{user_query}"
-Context: "{context}"
-
-Provide an optimized search query that will find the most relevant current tennis information. 
-Focus on search terms that work well with web search engines and include the current year ({current_year}) for recent/current queries.
-
-Return ONLY the optimized search query, no explanation needed."""
+Optimized search query:"""
 
         response = llm.invoke([{"role": "user", "content": optimization_prompt}])
         optimized_query = response.content.strip()
@@ -176,29 +157,24 @@ def tavily_search_tool(query: str, max_results: int = 10) -> Dict[str, Any]:
 
 
 @tool
-def summarize_search_results(search_results: Dict[str, Any], focus_context: str = "") -> Dict[str, Any]:
+def interpret_search_results(search_results: Dict[str, Any], user_query: str) -> Dict[str, Any]:
     """
-    Use LLM to intelligently summarize and process search results.
-    
-    This implements the missing result summarizer from the original tavily_search.py
-    by creating a specialized LLM agent to process raw search results.
+    Convert raw search results to natural language interpretation using a single efficient LLM call.
     
     Args:
         search_results: Raw search results from tavily_search_tool
-        focus_context: Additional context about what to focus on in summarization
+        user_query: Original user question for context
         
     Returns:
-        Dictionary with processed and summarized results
+        Dictionary with natural language interpretation
     """
     config = TennisConfig()
     
     if not search_results.get("success", False):
         return {
             "success": False,
-            "error": search_results.get("error", "No search results to summarize"),
-            "summarized_results": [],
-            "key_findings": "",
-            "confidence_assessment": 0.0
+            "interpretation": f"Web search failed: {search_results.get('error', 'Unknown error')}",
+            "confidence": 0.0
         }
     
     raw_results = search_results.get("raw_results", {})
@@ -207,97 +183,62 @@ def summarize_search_results(search_results: Dict[str, Any], focus_context: str 
     if not results_list:
         return {
             "success": True,
-            "summarized_results": [],
-            "key_findings": "No search results found",
-            "confidence_assessment": 0.0,
-            "current_information": "",
-            "information_gaps": "No information available",
-            "source_quality_notes": "No sources to evaluate"
+            "interpretation": "No relevant information found in web search results.",
+            "confidence": 0.3
         }
     
     try:
-        # Initialize LLM for summarization
-        llm = ChatOpenAI(
-            model=config.default_model,
-            temperature=config.temperature,
-            api_key=config.openai_api_key
-        )
+        llm = ChatOpenAI(model=config.default_model, temperature=0.2)
         
-        # Create summarization prompt
-        summarization_prompt = f"""
-        You are a tennis information summarization specialist. Your task is to process web search results 
-        and extract the most relevant and accurate tennis information.
+        # Prepare search results for interpretation (limit to top 3 for efficiency)
+        top_results = results_list[:3]
+        search_summary = ""
         
-        FOCUS CONTEXT: {focus_context}
-        
-        SEARCH QUERY: {search_results.get('query_used', 'N/A')}
-        
-        SEARCH RESULTS TO PROCESS:
-        {json.dumps(results_list, indent=2)}
-        
-        Please analyze these search results and provide:
-        
-        1. **Summarized Results**: For each relevant result, extract:
-           - Source name and credibility assessment
-           - Key information relevant to tennis and the query
-           - Relevance score (0.0-1.0)
-           - Recency assessment
-        
-        2. **Key Findings**: Most important insights from all results combined
-        
-        3. **Current Information**: Most recent/timely updates found
-        
-        4. **Information Gaps**: What information wasn't found or is unclear
-        
-        5. **Source Quality Assessment**: Overall assessment of source reliability
-        
-        FOCUS ON:
-        - Official tennis organizations (ATP, WTA, ITF)
-        - Credible sports news sources
-        - Recent and factual information
-        - Tennis-specific relevance
-        
-        IGNORE:
-        - Irrelevant or off-topic content
-        - Opinion pieces without factual basis
-        - Outdated information when recent data is available
-        
-        Respond in valid JSON format with the following structure:
-        {{
-            "summarized_results": [
-                {{
-                    "source": "source_name",
-                    "url": "source_url",
-                    "summary": "key_information_extracted",
-                    "relevance_score": 0.0-1.0,
-                    "recency": "assessment_of_how_recent",
-                    "credibility": "assessment_of_source_credibility"
-                }}
-            ],
-            "key_findings": "main_insights_from_all_results",
-            "current_information": "most_recent_timely_updates", 
-            "information_gaps": "what_information_wasnt_found",
-            "source_quality_notes": "overall_assessment_of_sources",
-            "confidence_assessment": 0.0-1.0
-        }}
-        """
-        
-        # Get LLM response
-        response = llm.invoke(summarization_prompt)
-        
-        # Parse JSON response
-        try:
-            summary_data = json.loads(response.content)
-            summary_data["success"] = True
-            return summary_data
+        for i, result in enumerate(top_results, 1):
+            title = result.get("title", "No title")
+            content = result.get("content", "No content")[:300]  # Truncate long content
+            source = result.get("url", "").split("//")[-1].split("/")[0] if result.get("url") else "Unknown"
             
-        except json.JSONDecodeError:
-            # Fallback: create basic summary
-            return _create_basic_summary(results_list, search_results.get('query_used', ''))
-            
+            search_summary += f"{i}. {title}\n   Source: {source}\n   Content: {content}...\n\n"
+        
+        # Create efficient interpretation prompt
+        interpretation_prompt = f"""Convert these web search results into clear, natural language for a tennis question.
+
+USER QUESTION: "{user_query}"
+
+WEB SEARCH RESULTS:
+{search_summary}
+
+Provide a clear, conversational summary of the most relevant and current information found. Focus on facts, rankings, recent developments, or current status. Be specific with names, numbers, and dates when available.
+
+Example responses:
+- "According to recent rankings, Player X is currently ranked #Y..."
+- "The latest tournament results show that..."
+- "Current information indicates that..."
+
+Natural language interpretation:"""
+
+        response = llm.invoke([
+            SystemMessage(content="You are a tennis information interpreter. Convert web search results into clear, current information summaries."),
+            HumanMessage(content=interpretation_prompt)
+        ])
+        
+        interpretation = response.content.strip()
+        
+        return {
+            "success": True,
+            "interpretation": interpretation,
+            "source_count": len(results_list),
+            "has_data": True,
+            "confidence": 0.8
+        }
+        
     except Exception as e:
-        # Fallback to basic processing
-        return _create_basic_summary(results_list, search_results.get('query_used', ''), str(e))
+        return {
+            "success": False,
+            "interpretation": f"Failed to interpret search results: {str(e)}",
+            "confidence": 0.0
+        }
 
 
 @tool

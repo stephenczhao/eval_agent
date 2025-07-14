@@ -12,14 +12,16 @@ from .sql_tools import (
     execute_sql_query,
     validate_query_syntax,
     explain_query_results,
-    suggest_related_queries
+    suggest_related_queries,
+    interpret_sql_results
 )
 
 from .search_tools import (
     tavily_search_tool,
-    summarize_search_results,
+    interpret_search_results,
     filter_tennis_content,
-    extract_recent_updates
+    extract_recent_updates,
+    optimize_search_query
 )
 
 from .text_processing_tools import (
@@ -34,12 +36,14 @@ __all__ = [
     "validate_query_syntax", 
     "explain_query_results",
     "suggest_related_queries",
+    "interpret_sql_results",
     
     # Search Tools
     "tavily_search_tool",
-    "summarize_search_results",
+    "interpret_search_results",
     "filter_tennis_content",
     "extract_recent_updates",
+    "optimize_search_query",
     
     # Text Processing Tools
     "extract_key_entities",

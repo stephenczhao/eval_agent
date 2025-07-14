@@ -45,35 +45,28 @@ def generate_sql_query(user_query: str) -> Dict[str, Any]:
     try:
         llm = ChatOpenAI(model=config.default_model, temperature=0.1)
         
-        schema_context = get_database_schema_context()
-        
-        sql_generation_prompt = f"""You are a SQL expert for a tennis intelligence system. Generate a precise SQL query to answer the user's question.
+        # Use abbreviated schema context for efficiency
+        sql_generation_prompt = f"""Generate a precise SQL query for this tennis question.
 
-DATABASE SCHEMA:
-{schema_context}
+DATABASE: tennis_matches (13K matches 2023-2025), players (853 players with stats), plus views: player_match_stats, head_to_head, surface_performance
 
-USER QUESTION: "{user_query}"
+QUESTION: "{user_query}"
 
-IMPORTANT GUIDELINES:
-1. Generate ONLY the SQL query, no explanations
-2. Use proper table joins when needed
-3. Handle player names with LIKE for partial matches (e.g., WHERE player1 LIKE '%Sinner%' OR player2 LIKE '%Sinner%')
-4. For "last year" or "2024", use WHERE match_date conditions appropriately
-5. Use COUNT(*) for counting matches between players
-6. Include proper date filtering for temporal queries
-7. Order results logically (e.g., by date, score, etc.)
-8. Limit results when appropriate (e.g., LIMIT 10 for large result sets)
+GUIDELINES:
+- Return ONLY the SQL query
+- Use LIKE '%name%' for player names
+- Use proper date filtering for temporal queries
+- Add LIMIT for large results
+- Common patterns:
+  * Player stats: SELECT from player_match_stats
+  * Match counts: COUNT(*) with player conditions
+  * Head-to-head: Use head_to_head view
+  * Surface analysis: Use surface_performance view
 
-EXAMPLE PATTERNS:
-- "How many times did X play Y?" → COUNT matches WHERE both players involved
-- "X's win ratio in 2024" → Calculate wins/total matches for that year
-- "X vs Y head-to-head" → All matches between the two players
-- "Who won the latest tournament?" → Most recent tournament winner
-
-Generate the SQL query:"""
+SQL Query:"""
 
         response = llm.invoke([
-            SystemMessage(content="You are a SQL expert. Generate precise SQL queries for tennis database questions. Return ONLY the SQL query."),
+            SystemMessage(content="Generate precise SQL for tennis database queries. Return only SQL."),
             HumanMessage(content=sql_generation_prompt)
         ])
         
@@ -435,6 +428,79 @@ def suggest_related_queries(base_query: str, results: Dict[str, Any]) -> List[st
         ])
     
     return suggestions[:5]  # Limit to 5 suggestions
+
+
+@tool
+def interpret_sql_results(sql_results: Dict[str, Any], user_query: str) -> Dict[str, Any]:
+    """
+    Convert raw SQL results to natural language interpretation using a single efficient LLM call.
+    
+    Args:
+        sql_results: Raw results from execute_sql_query
+        user_query: Original user question for context
+        
+    Returns:
+        Dictionary with natural language interpretation
+    """
+    config = TennisConfig()
+    
+    if not sql_results.get("success", False):
+        return {
+            "success": False,
+            "interpretation": f"Database query failed: {sql_results.get('error', 'Unknown error')}",
+            "confidence": 0.0
+        }
+    
+    try:
+        llm = ChatOpenAI(model=config.default_model, temperature=0.2)
+        
+        # Prepare the raw SQL output for interpretation
+        columns = sql_results.get("columns", [])
+        rows = sql_results.get("rows", [])
+        row_count = sql_results.get("row_count", 0)
+        formatted_output = sql_results.get("formatted", "")
+        
+        # Create efficient interpretation prompt
+        interpretation_prompt = f"""Convert this SQL query result into clear, natural language for a tennis question.
+
+USER QUESTION: "{user_query}"
+
+SQL RESULT:
+Columns: {columns}
+Row Count: {row_count}
+Data:
+{formatted_output}
+
+Provide a clear, conversational interpretation of what this data shows in response to the user's question. Be specific with numbers and facts. Keep it concise but informative.
+
+Example:
+- If showing player stats: "Player X has won Y matches with a Z% win rate"
+- If showing match counts: "These players have faced each other X times"
+- If no results: "No matching records found in the database"
+
+Natural language interpretation:"""
+
+        response = llm.invoke([
+            SystemMessage(content="You are a tennis data interpreter. Convert SQL results into clear, natural language explanations."),
+            HumanMessage(content=interpretation_prompt)
+        ])
+        
+        interpretation = response.content.strip()
+        
+        return {
+            "success": True,
+            "interpretation": interpretation,
+            "row_count": row_count,
+            "has_data": row_count > 0,
+            "confidence": 0.9 if row_count > 0 else 0.7
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "interpretation": f"Failed to interpret SQL results: {str(e)}",
+            "confidence": 0.0
+        }
 
 
 def _check_parentheses_balance(query: str) -> bool:

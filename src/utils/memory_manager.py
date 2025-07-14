@@ -158,6 +158,11 @@ class MemoryManager:
         max_retries = 3
         retry_count = 0
         
+        # Debug: Show what we're storing
+        print(f"🧠 Storing conversation:")
+        print(f"   Query: '{user_query}'")
+        print(f"   Response: '{system_response[:100]}...'")
+        
         while retry_count < max_retries:
             try:
                 conn = sqlite3.connect(self.memory_db_path, timeout=10.0)
@@ -186,6 +191,7 @@ class MemoryManager:
                 ))
                 
                 conn.commit()
+                print(f"✅ Memory stored successfully")
                 # Success - break out of retry loop
                 break
                 
@@ -311,6 +317,10 @@ class MemoryManager:
             
             results = cursor.fetchall()
             
+            # Debug: Show what we're retrieving
+            print(f"🧠 Memory retrieval for: '{current_query}'")
+            print(f"   Found {len(results)} conversation entries in history")
+            
             # Score relevance based on keyword overlap
             relevant_contexts = []
             for row in results:
@@ -320,7 +330,12 @@ class MemoryManager:
                     
                     # Calculate word overlap
                     overlap = len(query_words.intersection(past_words))
-                    if overlap > 0:
+                    
+                    # For follow-up questions (short queries), prioritize recent conversations
+                    is_short_query = len(current_query.split()) <= 3
+                    is_recent = len(relevant_contexts) < 3  # First 3 are most recent
+                    
+                    if overlap > 0 or (is_short_query and is_recent):
                         # Also check entity overlap
                         try:
                             entities = json.loads(row[3]) if row[3] else []
@@ -329,7 +344,10 @@ class MemoryManager:
                         
                         entity_overlap = len([e for e in entities if e and e.lower() in current_query.lower()])
                         
-                        relevance_score = overlap + (entity_overlap * 2)  # Weight entities higher
+                        # Boost relevance for short queries with recent conversations
+                        relevance_score = overlap + (entity_overlap * 2)
+                        if is_short_query and is_recent:
+                            relevance_score += 5  # Boost for potential follow-ups
                         
                         relevant_contexts.append({
                             "timestamp": row[0],
@@ -339,6 +357,10 @@ class MemoryManager:
                             "confidence_score": float(row[4]) if row[4] is not None else 0.0,
                             "relevance_score": relevance_score
                         })
+                        
+                        # Debug: Show what context we're considering
+                        print(f"   Context: '{row[1][:50]}...' (relevance: {relevance_score})")
+                        
                 except Exception as e:
                     # Skip malformed entries
                     print(f"⚠️  Skipping malformed memory entry: {e}")
@@ -346,7 +368,10 @@ class MemoryManager:
             
             # Sort by relevance and return top results
             relevant_contexts.sort(key=lambda x: x["relevance_score"], reverse=True)
-            return relevant_contexts[:max_entries]
+            final_contexts = relevant_contexts[:max_entries]
+            
+            print(f"   Using {len(final_contexts)} context entries for routing decision")
+            return final_contexts
             
         except sqlite3.OperationalError as e:
             print(f"⚠️  Memory retrieval failed (database locked): {e}")

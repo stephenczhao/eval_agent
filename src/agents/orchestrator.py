@@ -225,13 +225,6 @@ class OrchestratorAgent:
                 session_id, user_query, max_entries=3
             )
             
-            # Debug: Show memory context retrieval
-            print(f"🧠 Memory context retrieved: {len(relevant_context)} entries")
-            if relevant_context:
-                for i, ctx in enumerate(relevant_context, 1):
-                    print(f"   {i}. Previous: '{ctx.get('user_query', '')[:50]}...'")
-                    print(f"      Relevance: {ctx.get('relevance_score', 0)}")
-            
             # Create analysis prompt with context
             analysis_prompt = self._create_analysis_prompt(
                 user_query, tennis_entities, relevant_context
@@ -316,13 +309,20 @@ class OrchestratorAgent:
         current_year = current_datetime.year
         current_month = current_datetime.strftime("%B %Y")
         
+        # Build conversation context if available
         context_summary = ""
         if relevant_context:
-            context_summary = "\nRELEVANT CONVERSATION CONTEXT:\n"
-            for i, context in enumerate(relevant_context[:3], 1):
-                context_summary += f"{i}. Previous Query: {context['user_query']}\n"
-                context_summary += f"   Response Summary: {context['system_response'][:200]}...\n"
-                context_summary += f"   Entities: {context.get('entities', [])}\n\n"
+            # Get the most recent relevant conversation
+            most_recent = relevant_context[0]  # Most relevant is first
+            prev_query = most_recent.get('user_query', '')
+            prev_response_snippet = most_recent.get('system_response', '')[:300]  # First 300 chars
+            
+            context_summary = f"""
+RECENT CONVERSATION CONTEXT:
+Previous Question: "{prev_query}"
+Previous Answer Summary: "{prev_response_snippet}..."
+
+IMPORTANT: If the current query seems incomplete or refers to previous context (like "who's the second?", "what about X?", "and the next one?"), interpret it in relation to the previous conversation."""
         
         entities_summary = ""
         if tennis_entities:
@@ -338,17 +338,15 @@ class OrchestratorAgent:
         
         DATABASE COVERAGE: 2023-2025 tennis matches (historical data through {current_year})
         WEB SEARCH: Current rankings, recent news, live tournaments
+        {context_summary}
         
         USER QUERY: "{user_query}"
         {entities_summary}
-        {context_summary}
         
-        Based on this query and the current date context, break down what tasks are needed to provide a complete answer.
-        For each task, determine whether it requires:
-        - SQL database query (historical data, player stats, match records from 2023-2025)
-        - Web search (current information, recent news, general tennis knowledge)
+        Based on this query and conversation context, determine routing strategy:
         
-        IMPORTANT TEMPORAL CONSIDERATIONS:
+        ROUTING STRATEGY:
+        - If this appears to be a follow-up question (like "who's the second?" after asking about rankings), consider the PREVIOUS CONTEXT to understand what data source is needed
         - Questions about {current_year} data: Use SQL if asking about matches/stats through {current_date_str}
         - Questions about "current" rankings/form: May need BOTH SQL (historical context) AND search (latest updates)
         - Questions about future events: Use web search

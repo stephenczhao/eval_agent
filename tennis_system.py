@@ -25,8 +25,8 @@ try:
     from config.settings import TennisConfig, validate_config
     from utils.memory_manager import MemoryManager, create_session_id
     from agents.orchestrator import OrchestratorAgent
-    from tools.sql_tools import execute_sql_query, generate_sql_query
-    from tools.search_tools import tavily_search_tool, summarize_search_results, optimize_search_query
+    from tools.sql_tools import execute_sql_query, generate_sql_query, interpret_sql_results
+    from tools.search_tools import tavily_search_tool, interpret_search_results, optimize_search_query
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage, SystemMessage
 except ImportError as e:
@@ -199,15 +199,9 @@ Response (YES or NO only):"""
             # Store complete conversation in memory
             execution_time = time.time() - start_time
             
-            # Debug: Show what we're storing in memory
+            # Store conversation efficiently
             entities_to_store = routing_result.get('extracted_entities', [])
             intent_to_store = routing_result.get('query_analysis', {}).get('intent', 'unknown')
-            
-            print(f"🧠 Storing conversation in memory:")
-            print(f"   • Session: {session_id}")
-            print(f"   • Entities: {entities_to_store}")
-            print(f"   • Intent: {intent_to_store}")
-            print(f"   • Confidence: {response.get('confidence', 0.0):.2f}")
             
             self.memory_manager.store_conversation(
                 session_id=session_id,
@@ -233,123 +227,98 @@ Response (YES or NO only):"""
             }
     
     def _execute_sql_agent(self, user_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute SQL database queries based on the user query."""
+        """Execute SQL database queries and interpret results efficiently."""
         print("🗄️  Executing SQL Agent...")
         
         try:
-            # Generate SQL query using LLM text-to-SQL
-            print("🧠 Generating SQL query from natural language...")
+            # Generate and execute SQL query
             sql_generation = generate_sql_query(user_query)
             
             if not sql_generation.get('success', False):
-                print(f"❌ SQL generation failed: {sql_generation.get('error', 'Unknown error')}")
                 return {
-                    'query': None,
-                    'results': [],
-                    'row_count': 0,
                     'success': False,
-                    'error': f"SQL generation failed: {sql_generation.get('error', 'Unknown error')}"
+                    'interpretation': f"SQL generation failed: {sql_generation.get('error', 'Unknown error')}",
+                    'confidence': 0.0
                 }
             
             sql_query = sql_generation.get('sql_query')
-            print(f"✨ Generated SQL: {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
+            print(f"✨ Generated SQL: {sql_query[:60]}{'...' if len(sql_query) > 60 else ''}")
             
             # Execute the generated query
             results = execute_sql_query.invoke({"query": sql_query})
+            print(f"📊 SQL executed: {results.get('row_count', 0)} rows returned")
             
-            print(f"📊 SQL query executed: {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
+            # Interpret results to natural language
+            interpretation = interpret_sql_results.invoke({
+                "sql_results": results,
+                "user_query": user_query
+            })
             
-            # Handle the results based on the execute_sql_query response format
-            if results.get('success', False):
-                row_count = results.get('row_count', 0)
-                print(f"📈 Returned {row_count} rows")
-                
-                return {
-                    'query': sql_query,
-                    'results': results,
-                    'row_count': row_count,
-                    'success': True,
-                    'generated_sql': True
-                }
-            else:
-                print(f"❌ Query execution failed: {results.get('error', 'Unknown error')}")
-                return {
-                    'query': sql_query,
-                    'results': results,
-                    'row_count': 0,
-                    'success': False,
-                    'error': results.get('error', 'Query execution failed'),
-                    'generated_sql': True
-                }
+            return {
+                'success': interpretation.get('success', False),
+                'interpretation': interpretation.get('interpretation', ''),
+                'confidence': interpretation.get('confidence', 0.5),
+                'row_count': results.get('row_count', 0),
+                'has_data': interpretation.get('has_data', False)
+            }
             
         except Exception as e:
             print(f"❌ SQL Agent error: {e}")
             return {
-                'query': sql_query if 'sql_query' in locals() else None,
-                'results': [],
-                'row_count': 0,
                 'success': False,
-                'error': str(e),
-                'generated_sql': False
+                'interpretation': f"SQL processing failed: {str(e)}",
+                'confidence': 0.0,
+                'row_count': 0,
+                'has_data': False
             }
     
     def _execute_search_agent(self, user_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute web search based on the user query."""
+        """Execute web search and interpret results efficiently."""
         print("🌐 Executing Search Agent...")
         
         try:
-            # Extract search query from routing result or use original query
-            routing_decision = routing_result.get('routing_decision', {})
-            initial_search_query = routing_decision.get('search_query', user_query)
-            
-            # Step 1: Optimize the search query using the search query expert
-            print("🧠 Optimizing search query...")
+            # Optimize search query
             optimization_result = optimize_search_query.invoke({
-                "user_query": initial_search_query,
-                "context": f"Tennis query routing: {routing_decision.get('reasoning', '')}"
+                "user_query": user_query,
+                "context": routing_result.get('routing_decision', {}).get('reasoning', '')
             })
             
             # Use optimized query if successful, fallback to original if failed
             if optimization_result.get('success', False):
-                optimized_query = optimization_result.get('optimized_query', initial_search_query)
-                print(f"✨ Query optimized: '{initial_search_query}' → '{optimized_query}'")
+                search_query = optimization_result.get('optimized_query', user_query)
+                print(f"✨ Optimized query: {search_query[:60]}{'...' if len(search_query) > 60 else ''}")
             else:
-                optimized_query = initial_search_query
-                print(f"⚠️  Query optimization failed, using original: '{initial_search_query}'")
+                search_query = user_query
+                print(f"⚠️  Using original query: {user_query[:60]}{'...' if len(user_query) > 60 else ''}")
             
-            # Step 2: Perform search with optimized query
-            search_results = tavily_search_tool.invoke({"query": optimized_query})
+            # Perform search
+            search_results = tavily_search_tool.invoke({"query": search_query})
             
-            # Step 3: Summarize results
-            summary = summarize_search_results.invoke({
-                "search_results": search_results, 
-                "focus_context": user_query
+            result_count = search_results.get('result_count', 0)
+            print(f"🔍 Search completed: {result_count} results found")
+            
+            # Interpret results to natural language
+            interpretation = interpret_search_results.invoke({
+                "search_results": search_results,
+                "user_query": user_query
             })
             
-            print(f"🔍 Final search query: {optimized_query}")
-            # Extract results from the tool's structured output
-            actual_results = search_results.get('raw_results', {}).get('results', [])
-            print(f"📑 Found {len(actual_results)} results")
-            
             return {
-                'query': optimized_query,
-                'original_query': initial_search_query,
-                'optimization_result': optimization_result,
-                'results': search_results,
-                'summary': summary,
-                'success': True
+                'success': interpretation.get('success', False),
+                'interpretation': interpretation.get('interpretation', ''),
+                'confidence': interpretation.get('confidence', 0.5),
+                'source_count': interpretation.get('source_count', 0),
+                'has_data': interpretation.get('has_data', False)
             }
             
         except Exception as e:
             print(f"❌ Search Agent error: {e}")
             return {
-                'query': initial_search_query if 'initial_search_query' in locals() else None,
-                'original_query': user_query,
-                'optimization_result': {},
-                'results': {},
-                'summary': "",
                 'success': False,
-                'error': str(e)
+                'interpretation': f"Search processing failed: {str(e)}",
+                'confidence': 0.0,
+                'source_count': 0,
+                'has_data': False
             }
     
     def _synthesize_response(
@@ -359,116 +328,110 @@ Response (YES or NO only):"""
         search_results: Dict[str, Any],
         routing_result: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Synthesize a final response from SQL and search results."""
+        """Synthesize final response from natural language interpretations efficiently."""
         print("🧮 Synthesizing final response...")
         
+        # Determine what sources were used
+        sql_success = sql_results and sql_results.get('success', False)
+        search_success = search_results and search_results.get('success', False)
+        
         sources = []
-        confidence = 0.8  # Base confidence
-        final_response = ""
-        
-        # Print technical details for monitoring
-        if sql_results and sql_results.get('success'):
-            print(f"📊 SQL: Found {sql_results.get('row_count', 0)} database records")
+        if sql_success:
             sources.append('Tennis Database')
-            confidence += 0.1
-        
-        if search_results and search_results.get('success'):
-            tavily_results = search_results.get('results', {})
-            raw_results = tavily_results.get('raw_results', {})
-            results_count = len(raw_results.get('results', []))
-            if results_count > 0:
-                # Show query optimization info
-                if search_results.get('optimization_result', {}).get('optimization_applied'):
-                    original_q = search_results.get('original_query', '')
-                    optimized_q = search_results.get('query', '')
-                    print(f"🌐 Search: Found {results_count} web results (query optimized)")
-                    print(f"   Original: '{original_q}' → Optimized: '{optimized_q}'")
-                else:
-                    print(f"🌐 Search: Found {results_count} web results")
-                sources.append('Web Search')
-                confidence += 0.1
-        
-        # Use LLM to synthesize results - just pass everything to the LLM!
-        
-        llm = ChatOpenAI(model=self.config.default_model, temperature=0.3)
+        if search_success:
+            sources.append('Web Search')
         
         # Get current datetime context
         current_datetime = datetime.now()
-        current_date_str = current_datetime.strftime("%Y-%m-%d %H:%M")
+        current_date_str = current_datetime.strftime("%Y-%m-%d")
         current_year = current_datetime.year
         
-        # Prepare all available information for the LLM
-        info_for_llm = f"User Question: {user_query}\n\n"
+        # Build context about steps taken
+        steps_taken = []
+        sql_interpretation = ""
+        search_interpretation = ""
         
-        # Add search results if available
-        if search_results and search_results.get('success'):
-            # The search agent returns results nested under 'results' key
-            tavily_results = search_results.get('results', {})
-            raw_results = tavily_results.get('raw_results', {})
-            
-            if raw_results and raw_results.get('results'):
-                info_for_llm += "Web Search Results:\n"
-                for i, result in enumerate(raw_results['results'][:5], 1):
-                    info_for_llm += f"{i}. {result.get('title', 'No title')}\n"
-                    info_for_llm += f"   {result.get('content', 'No content')}\n\n"
-                
-                # Debug: Print what we're sending to the LLM
-                print(f"🔍 Debug: Sending {len(raw_results['results'])} search results to LLM")
-                print(f"📝 Debug: First result title: {raw_results['results'][0].get('title', 'N/A')}")
-            else:
-                print("⚠️  Debug: No search results found in nested structure")
-                print(f"🔍 Debug: search_results keys: {list(search_results.keys())}")
-                print(f"🔍 Debug: tavily_results keys: {list(tavily_results.keys()) if tavily_results else 'None'}")
-                print(f"🔍 Debug: raw_results keys: {list(raw_results.keys()) if raw_results else 'None'}")
-        else:
-            print("⚠️  Debug: No successful search_results provided to synthesis")
+        if sql_success:
+            sql_interpretation = sql_results.get('interpretation', '')
+            row_count = sql_results.get('row_count', 0)
+            steps_taken.append(f"✓ Analyzed tennis database ({row_count} records found): {sql_interpretation}")
+            print(f"📊 Database analysis: {row_count} records")
         
-        # Add SQL results if available  
-        if sql_results and sql_results.get('success') and sql_results.get('row_count', 0) > 0:
-            info_for_llm += f"Database Results: Found {sql_results['row_count']} relevant records\n\n"
+        if search_success:
+            search_interpretation = search_results.get('interpretation', '')
+            source_count = search_results.get('source_count', 0)
+            steps_taken.append(f"✓ Searched current tennis information ({source_count} sources): {search_interpretation}")
+            print(f"🌐 Web search: {source_count} sources")
         
-        # Enhanced synthesis prompt with temporal context
-        synthesis_prompt = f"""{info_for_llm}
-
-CURRENT DATE AND CONTEXT:
-- Today's date: {current_date_str}
-- Current year: {current_year}
-- Available database: Tennis matches and player data from 2023-{current_year}
-- You have access to comprehensive tennis data through {current_year}
-
-IMPORTANT INSTRUCTIONS:
-- You are answering in {current_year}, so questions about {current_year} events are NOT in the future
-- The tennis database contains actual match data through {current_year}
-- Do NOT refuse to answer questions about {current_year} events - this data is available
-- Do NOT mention training cutoffs or refuse based on dates - you have current data
-- If asking about {current_year} tennis matches/stats, use the database results provided
-- Be confident in providing information about tennis events through {current_year}
-
-Based on the above retrieved information, provide a helpful, conversational and effective response to the user's question: {user_query}
-
-Focus on being factual and helpful rather than expressing uncertainty about temporal limitations."""
+        # Calculate overall confidence
+        confidences = []
+        if sql_success:
+            confidences.append(sql_results.get('confidence', 0.5))
+        if search_success:
+            confidences.append(search_results.get('confidence', 0.5))
+        
+        overall_confidence = sum(confidences) / len(confidences) if confidences else 0.3
         
         try:
-            messages = [
-                SystemMessage(content=f"You are a helpful tennis expert assistant with access to current tennis data through {current_year}. Today is {current_date_str}. Answer questions confidently using the provided data."),
+            llm = ChatOpenAI(model=self.config.default_model, temperature=0.3)
+            
+            # Create efficient synthesis prompt
+            synthesis_prompt = f"""Create a comprehensive tennis response using the analyzed information.
+
+USER QUESTION: "{user_query}"
+
+CURRENT CONTEXT: Today is {current_date_str} ({current_year})
+
+ANALYSIS COMPLETED:
+{chr(10).join(steps_taken)}
+
+Your task: Combine these insights into a clear, conversational response that directly answers the user's question. Structure your response as follows:
+
+1. **Direct Answer**: Start with a clear answer to their question
+2. **Supporting Details**: Include specific facts, numbers, rankings, or statistics 
+3. **Context**: Briefly explain how you found this information (database analysis and/or current web search)
+
+Be factual, specific, and engaging. Use the information provided above - don't add information not contained in the analysis results.
+
+Response:"""
+
+            response = llm.invoke([
+                SystemMessage(content=f"You are a tennis expert providing comprehensive answers using analyzed data. Today is {current_date_str}."),
                 HumanMessage(content=synthesis_prompt)
-            ]
-            response = llm.invoke(messages)
-            final_response = response.content
-            confidence = 0.9
+            ])
+            
+            final_response = response.content.strip()
+            
+            return {
+                'response': final_response,
+                'confidence': min(overall_confidence + 0.1, 1.0),  # Slight boost for successful synthesis
+                'sources': sources,
+                'steps_taken': steps_taken,
+                'sql_data_used': sql_success,
+                'search_data_used': search_success
+            }
+            
         except Exception as e:
             print(f"⚠️  LLM synthesis failed: {e}")
-            final_response = "I found tennis information but had trouble processing it. Could you try asking again?"
-            confidence = 0.3
-        
-        return {
-            'response': final_response,
-            'confidence': min(confidence, 1.0),
-            'sources': sources,
-            'sql_data': sql_results,
-            'search_data': search_results,
-            'routing': routing_result
-        }
+            
+            # Create fallback response using available interpretations
+            fallback_parts = []
+            if sql_interpretation:
+                fallback_parts.append(f"Database analysis: {sql_interpretation}")
+            if search_interpretation:
+                fallback_parts.append(f"Current information: {search_interpretation}")
+            
+            fallback_response = f"Based on the available information:\n\n" + "\n\n".join(fallback_parts) if fallback_parts else "I was unable to find relevant information for your tennis question."
+            
+            return {
+                'response': fallback_response,
+                'confidence': overall_confidence * 0.8,  # Reduced confidence for fallback
+                'sources': sources,
+                'steps_taken': steps_taken,
+                'sql_data_used': sql_success,
+                'search_data_used': search_success,
+                'fallback_used': True
+            }
 
 
 def main():
