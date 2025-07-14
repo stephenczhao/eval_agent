@@ -225,6 +225,13 @@ class OrchestratorAgent:
                 session_id, user_query, max_entries=3
             )
             
+            # Debug: Show memory context retrieval
+            print(f"🧠 Memory context retrieved: {len(relevant_context)} entries")
+            if relevant_context:
+                for i, ctx in enumerate(relevant_context, 1):
+                    print(f"   {i}. Previous: '{ctx.get('user_query', '')[:50]}...'")
+                    print(f"      Relevance: {ctx.get('relevance_score', 0)}")
+            
             # Create analysis prompt with context
             analysis_prompt = self._create_analysis_prompt(
                 user_query, tennis_entities, relevant_context

@@ -68,6 +68,12 @@ class MemoryManager:
         self.memory_db_path = Path(memory_db_path)
         self.memory_db_path.parent.mkdir(exist_ok=True)
         self._init_memory_database()
+        
+        # Cleanup old memory on initialization (keep last 7 days)
+        try:
+            self.cleanup_old_memory(days_to_keep=7)
+        except Exception as e:
+            print(f"⚠️  Memory cleanup failed: {e}")
     
     def _init_memory_database(self) -> None:
         """Initialize the memory database with required tables."""
@@ -147,40 +153,62 @@ class MemoryManager:
         tennis_entities: List[str] = None,
         query_intent: str = "unknown"
     ) -> None:
-        """Store a conversation turn in memory - simplified to just user query and response."""
+        """Store a conversation turn in memory with improved error handling."""
         conn = None
-        try:
-            conn = sqlite3.connect(self.memory_db_path)
-            cursor = conn.cursor()
-            
-            # Simple conversation storage - just user query and system response
-            cursor.execute("""
-                INSERT INTO conversation_history 
-                (session_id, timestamp, user_query, system_response, sources_used,
-                 confidence_score, execution_time, tennis_entities, query_intent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                session_id,
-                datetime.now(),
-                user_query,
-                system_response,
-                json.dumps(sources_used or []),
-                confidence_score,
-                execution_time,
-                json.dumps(tennis_entities or []),
-                query_intent
-            ))
-            
-            conn.commit()
-            
-        except sqlite3.OperationalError as e:
-            # Handle database lock gracefully
-            print(f"⚠️  Memory storage skipped due to database lock: {e}")
-        except Exception as e:
-            print(f"⚠️  Memory storage failed: {e}")
-        finally:
-            if conn:
-                conn.close()
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                conn = sqlite3.connect(self.memory_db_path, timeout=10.0)
+                cursor = conn.cursor()
+                
+                # Ensure data is properly serialized
+                sources_json = json.dumps(sources_used or [])
+                entities_json = json.dumps(tennis_entities or [])
+                
+                # Simple conversation storage - just user query and system response
+                cursor.execute("""
+                    INSERT INTO conversation_history 
+                    (session_id, timestamp, user_query, system_response, sources_used,
+                     confidence_score, execution_time, tennis_entities, query_intent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    session_id,
+                    datetime.now().isoformat(),
+                    user_query,
+                    system_response[:2000],  # Truncate long responses
+                    sources_json,
+                    float(confidence_score),
+                    float(execution_time),
+                    entities_json,
+                    query_intent
+                ))
+                
+                conn.commit()
+                # Success - break out of retry loop
+                break
+                
+            except sqlite3.OperationalError as e:
+                retry_count += 1
+                if "database is locked" in str(e).lower() and retry_count < max_retries:
+                    # Wait and retry for database locks
+                    import time
+                    time.sleep(0.1 * retry_count)  # Exponential backoff
+                    continue
+                else:
+                    print(f"⚠️  Memory storage failed after {retry_count} retries: {e}")
+                    break
+            except Exception as e:
+                print(f"⚠️  Memory storage failed: {e}")
+                break
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                conn = None
     
     def get_conversation_history(
         self,
@@ -188,32 +216,68 @@ class MemoryManager:
         limit: int = 10
     ) -> List[ConversationMemoryEntry]:
         """Get recent conversation history for a session."""
-        conn = sqlite3.connect(self.memory_db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT timestamp, user_query, system_response, sources_used,
-                   confidence_score, execution_time
-            FROM conversation_history
-            WHERE session_id = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (session_id, limit))
-        
-        results = cursor.fetchall()
-        conn.close()
-        
-        return [
-            ConversationMemoryEntry(
-                timestamp=datetime.fromisoformat(row[0]),
-                user_query=row[1],
-                system_response=row[2],
-                sources_used=json.loads(row[3]) if row[3] else [],
-                confidence_score=row[4],
-                execution_time=row[5]
-            )
-            for row in results
-        ]
+        if not session_id:
+            return []
+            
+        conn = None
+        try:
+            conn = sqlite3.connect(self.memory_db_path, timeout=5.0)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT timestamp, user_query, system_response, sources_used,
+                       confidence_score, execution_time
+                FROM conversation_history
+                WHERE session_id = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (session_id, limit))
+            
+            results = cursor.fetchall()
+            
+            conversation_history = []
+            for row in results:
+                try:
+                    # Handle different datetime formats
+                    timestamp_str = row[0]
+                    if timestamp_str:
+                        try:
+                            timestamp = datetime.fromisoformat(timestamp_str)
+                        except ValueError:
+                            # Fallback for different datetime formats
+                            timestamp = datetime.now()
+                    else:
+                        timestamp = datetime.now()
+                    
+                    # Parse sources JSON safely
+                    try:
+                        sources = json.loads(row[3]) if row[3] else []
+                    except (json.JSONDecodeError, TypeError):
+                        sources = []
+                    
+                    conversation_history.append(ConversationMemoryEntry(
+                        timestamp=timestamp,
+                        user_query=row[1] or "",
+                        system_response=row[2] or "",
+                        sources_used=sources,
+                        confidence_score=float(row[4]) if row[4] is not None else 0.0,
+                        execution_time=float(row[5]) if row[5] is not None else 0.0
+                    ))
+                except Exception as e:
+                    print(f"⚠️  Skipping malformed conversation entry: {e}")
+                    continue
+            
+            return conversation_history
+            
+        except Exception as e:
+            print(f"⚠️  Failed to retrieve conversation history: {e}")
+            return []
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
     
     def get_relevant_context(
         self,
@@ -226,50 +290,76 @@ class MemoryManager:
         
         Uses simple keyword matching to find relevant past conversations.
         """
-        conn = sqlite3.connect(self.memory_db_path)
-        cursor = conn.cursor()
-        
-        # Get recent conversations with keyword overlap
-        query_words = set(current_query.lower().split())
-        
-        cursor.execute("""
-            SELECT timestamp, user_query, system_response, tennis_entities, confidence_score
-            FROM conversation_history
-            WHERE session_id = ?
-            ORDER BY timestamp DESC
-            LIMIT 20
-        """, (session_id,))
-        
-        results = cursor.fetchall()
-        conn.close()
-        
-        # Score relevance based on keyword overlap
-        relevant_contexts = []
-        for row in results:
-            past_query = row[1].lower()
-            past_words = set(past_query.split())
+        if not current_query or not session_id:
+            return []
             
-            # Calculate word overlap
-            overlap = len(query_words.intersection(past_words))
-            if overlap > 0:
-                # Also check entity overlap
-                entities = json.loads(row[3]) if row[3] else []
-                entity_overlap = len([e for e in entities if e.lower() in current_query.lower()])
-                
-                relevance_score = overlap + (entity_overlap * 2)  # Weight entities higher
-                
-                relevant_contexts.append({
-                    "timestamp": row[0],
-                    "user_query": row[1],
-                    "system_response": row[2],
-                    "entities": entities,
-                    "confidence_score": row[4],
-                    "relevance_score": relevance_score
-                })
-        
-        # Sort by relevance and return top results
-        relevant_contexts.sort(key=lambda x: x["relevance_score"], reverse=True)
-        return relevant_contexts[:max_entries]
+        conn = None
+        try:
+            conn = sqlite3.connect(self.memory_db_path, timeout=5.0)
+            cursor = conn.cursor()
+            
+            # Get recent conversations with keyword overlap
+            query_words = set(current_query.lower().split())
+            
+            cursor.execute("""
+                SELECT timestamp, user_query, system_response, tennis_entities, confidence_score
+                FROM conversation_history
+                WHERE session_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 20
+            """, (session_id,))
+            
+            results = cursor.fetchall()
+            
+            # Score relevance based on keyword overlap
+            relevant_contexts = []
+            for row in results:
+                try:
+                    past_query = row[1].lower() if row[1] else ""
+                    past_words = set(past_query.split())
+                    
+                    # Calculate word overlap
+                    overlap = len(query_words.intersection(past_words))
+                    if overlap > 0:
+                        # Also check entity overlap
+                        try:
+                            entities = json.loads(row[3]) if row[3] else []
+                        except (json.JSONDecodeError, TypeError):
+                            entities = []
+                        
+                        entity_overlap = len([e for e in entities if e and e.lower() in current_query.lower()])
+                        
+                        relevance_score = overlap + (entity_overlap * 2)  # Weight entities higher
+                        
+                        relevant_contexts.append({
+                            "timestamp": row[0],
+                            "user_query": row[1] or "",
+                            "system_response": row[2] or "",
+                            "entities": entities,
+                            "confidence_score": float(row[4]) if row[4] is not None else 0.0,
+                            "relevance_score": relevance_score
+                        })
+                except Exception as e:
+                    # Skip malformed entries
+                    print(f"⚠️  Skipping malformed memory entry: {e}")
+                    continue
+            
+            # Sort by relevance and return top results
+            relevant_contexts.sort(key=lambda x: x["relevance_score"], reverse=True)
+            return relevant_contexts[:max_entries]
+            
+        except sqlite3.OperationalError as e:
+            print(f"⚠️  Memory retrieval failed (database locked): {e}")
+            return []
+        except Exception as e:
+            print(f"⚠️  Memory retrieval failed: {e}")
+            return []
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
     
     def get_user_preferences(self, session_id: str) -> Dict[str, Any]:
         """Get user preferences and patterns for personalization."""

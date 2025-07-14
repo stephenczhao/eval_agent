@@ -198,6 +198,17 @@ Response (YES or NO only):"""
             
             # Store complete conversation in memory
             execution_time = time.time() - start_time
+            
+            # Debug: Show what we're storing in memory
+            entities_to_store = routing_result.get('extracted_entities', [])
+            intent_to_store = routing_result.get('query_analysis', {}).get('intent', 'unknown')
+            
+            print(f"🧠 Storing conversation in memory:")
+            print(f"   • Session: {session_id}")
+            print(f"   • Entities: {entities_to_store}")
+            print(f"   • Intent: {intent_to_store}")
+            print(f"   • Confidence: {response.get('confidence', 0.0):.2f}")
+            
             self.memory_manager.store_conversation(
                 session_id=session_id,
                 user_query=user_query,
@@ -205,8 +216,8 @@ Response (YES or NO only):"""
                 sources_used=response.get('sources', []),
                 confidence_score=response.get('confidence', 0.0),
                 execution_time=execution_time,
-                tennis_entities=routing_result.get('extracted_entities', []),
-                query_intent=routing_result.get('query_analysis', {}).get('intent', 'unknown')
+                tennis_entities=entities_to_store,
+                query_intent=intent_to_store
             )
             
             return response
