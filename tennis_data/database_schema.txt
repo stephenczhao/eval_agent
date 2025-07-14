@@ -1,0 +1,399 @@
+TENNIS MATCHES DATABASE SCHEMA
+================================
+
+Database: tennis_matches.db
+Created: 2025-07-11
+Total Records: 13,303 matches, 853 players in database
+Date Range: 2023-01-01 to 2025-06-28
+Tours: ATP (6,899 matches) and WTA (6,404 matches)
+
+================================
+TABLES
+================================
+
+1. PLAYERS TABLE
+================
+Description: Contains unique player information with career statistics
+
+Columns:
+- player_id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+  Description: Unique identifier for each player
+  
+- player_name (TEXT, NOT NULL, UNIQUE)
+  Description: Original player name as it appears in match data
+  
+- normalized_name (TEXT, NOT NULL)
+  Description: Standardized version of player name (removed periods, extra spaces)
+  
+- tour_type (TEXT, NOT NULL)
+  Description: Which tour(s) the player competes in
+  Values: 'ATP', 'WTA', 'BOTH'
+  
+- first_appearance_date (DATE)
+  Description: Date of player's first match in the dataset
+  
+- last_appearance_date (DATE)
+  Description: Date of player's most recent match in the dataset
+  
+- total_matches (INTEGER, DEFAULT 0)
+  Description: Total number of matches played (wins + losses)
+  
+- total_wins (INTEGER, DEFAULT 0)
+  Description: Total number of matches won
+  
+- best_ranking (INTEGER)
+  Description: Best (lowest number) ranking achieved by the player
+  Note: Lower numbers indicate better rankings (1 = #1 in the world)
+  
+- highest_points (INTEGER)
+  Description: Highest number of ranking points achieved by the player
+
+Indexes:
+- idx_players_name ON player_name
+- idx_players_normalized ON normalized_name
+- idx_players_tour ON tour_type
+
+Sample Data:
+- 853 total players (407 ATP, 445 WTA, 1 competing in both tours)
+- Players tracked with detailed career statistics
+
+
+2. TENNIS_MATCHES TABLE
+=======================
+Description: Contains detailed information about each tennis match
+
+Columns:
+- match_id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+  Description: Unique identifier for each match
+  
+- tour_type (TEXT, NOT NULL)
+  Description: Tournament tour
+  Values: 'ATP', 'WTA'
+  
+- tournament_location (TEXT, NOT NULL)
+  Description: City/location where tournament was held
+  Example: 'Adelaide', 'Paris', 'New York'
+  
+- tournament_name (TEXT, NOT NULL)
+  Description: Official name of the tournament
+  Example: 'Australian Open', 'French Open', 'Wimbledon'
+  
+- match_date (DATE, NOT NULL)
+  Description: Date when the match was played
+  Format: YYYY-MM-DD
+  
+- court_type (TEXT)
+  Description: Indoor or outdoor court
+  Values: 'Indoor', 'Outdoor'
+  
+- surface_type (TEXT)
+  Description: Playing surface type
+  Values: 'Hard', 'Clay', 'Grass', 'Carpet'
+  Distribution: Hard (7,525), Clay (4,168), Grass (1,610)
+  
+- tournament_round (TEXT, NOT NULL)
+  Description: Round of the tournament (normalized)
+  Examples: 'Round 1', 'Round 2', 'Quarterfinal', 'Semifinal', 'Final'
+  
+- best_of_sets (INTEGER)
+  Description: Maximum number of sets in the match format
+  Values: 3, 5
+  
+- winner_id (INTEGER, NOT NULL)
+  Description: Foreign key to players table for match winner
+  References: players(player_id)
+  
+- loser_id (INTEGER, NOT NULL)
+  Description: Foreign key to players table for match loser
+  References: players(player_id)
+  
+- winner_name (TEXT, NOT NULL)
+  Description: Name of match winner (denormalized for LLM convenience)
+  
+- loser_name (TEXT, NOT NULL)
+  Description: Name of match loser (denormalized for LLM convenience)
+  
+- winner_rank (INTEGER)
+  Description: Winner's ranking at time of match
+  Note: Lower numbers = better rank, NULL for unranked players
+  
+- loser_rank (INTEGER)
+  Description: Loser's ranking at time of match
+  Note: Lower numbers = better rank, NULL for unranked players
+  
+- winner_points (INTEGER)
+  Description: Winner's ranking points at time of match
+  
+- loser_points (INTEGER)
+  Description: Loser's ranking points at time of match
+  
+- year (INTEGER, NOT NULL)
+  Description: Year when match was played
+  Range: 2023-2025
+  
+- month (INTEGER, NOT NULL)
+  Description: Month when match was played
+  Range: 1-12
+  
+- tournament_level (TEXT)
+  Description: Tournament category/level
+  ATP Values: 'Grand Slam', 'ATP 1000', 'ATP 500', 'ATP 250', 'Other'
+  WTA Values: 'Grand Slam', 'WTA 1000', 'WTA 500', 'WTA 250', 'Other'
+  
+- ranking_difference (INTEGER)
+  Description: winner_rank - loser_rank (negative = higher ranked beat lower ranked)
+  
+- points_difference (INTEGER)
+  Description: winner_points - loser_points
+
+Foreign Key Constraints:
+- FOREIGN KEY (winner_id) REFERENCES players(player_id)
+- FOREIGN KEY (loser_id) REFERENCES players(player_id)
+
+Indexes:
+- idx_tour_type ON tour_type
+- idx_year ON year
+- idx_tournament ON tournament_name
+- idx_surface ON surface_type
+- idx_round ON tournament_round
+- idx_winner_id ON winner_id
+- idx_loser_id ON loser_id
+- idx_winner_name ON winner_name
+- idx_loser_name ON loser_name
+- idx_date ON match_date
+- idx_location ON tournament_location
+- idx_winner_rank ON winner_rank
+- idx_loser_rank ON loser_rank
+- idx_composite_player_year ON (winner_id, year)
+- idx_composite_tournament_year ON (tournament_name, year)
+
+Sample Data:
+- 13,303 total matches
+- 6,899 ATP matches, 6,404 WTA matches
+- 118 unique tournaments
+
+
+================================
+VIEWS
+================================
+
+1. PLAYER_MATCH_STATS VIEW
+==========================
+Description: Comprehensive player statistics and career information
+
+Columns:
+- player_id (INTEGER): Player's unique ID
+- player_name (TEXT): Player's name
+- tour_type (TEXT): Tour(s) player competes in
+- total_matches (INTEGER): Total matches played
+- total_wins (INTEGER): Total matches won
+- win_percentage (REAL): Win percentage rounded to 2 decimal places
+- best_ranking (INTEGER): Best ranking achieved
+- highest_points (INTEGER): Highest points achieved
+- first_appearance_date (DATE): First match date
+- last_appearance_date (DATE): Most recent match date
+
+Filter: Only includes players with at least 1 match
+
+Example Usage: Find most successful players by win percentage
+
+
+2. HEAD_TO_HEAD VIEW
+====================
+Description: Head-to-head records between players who have played multiple times
+
+Columns:
+- player1 (TEXT): First player's name
+- player2 (TEXT): Second player's name
+- h2h_matches (INTEGER): Total matches played between them
+- player1_wins (INTEGER): Number of wins for player1
+- player2_wins (INTEGER): Number of wins for player2
+
+Filter: Only includes player pairs with more than 1 match
+Logic: player1.player_id < player2.player_id (prevents duplicates)
+
+Example Usage: "Show me the head-to-head record between Djokovic and Nadal"
+
+
+3. SURFACE_PERFORMANCE VIEW
+===========================
+Description: Player performance statistics by playing surface
+
+Columns:
+- player_name (TEXT): Player's name
+- surface_type (TEXT): Court surface (Hard, Clay, Grass, Carpet)
+- matches_played (INTEGER): Number of matches on this surface
+- wins (INTEGER): Number of wins on this surface
+- win_percentage (REAL): Win percentage on this surface
+
+Filter: Only includes surface/player combinations with at least 5 matches
+
+Example Usage: "Who has the best win rate on clay courts?"
+
+
+================================
+DATA QUALITY NOTES
+================================
+
+1. Player Name Normalization:
+   - Periods removed from names
+   - Extra whitespace trimmed
+   - Handles name variations automatically
+
+2. Tournament Round Normalization:
+   - "The Final" → "Final"
+   - "1st Round" → "Round 1"
+   - "Quarterfinals" → "Quarterfinal"
+   - "Semifinals" → "Semifinal"
+
+3. Missing Data Handling:
+   - Rankings: NULL for unranked players
+   - Points: NULL when not available
+   - Court type: Some matches may have NULL values
+
+4. Cross-Tour Players:
+   - Players competing in both ATP and WTA marked as tour_type = 'BOTH'
+   - Currently 1 player (Wong C.) identified
+
+5. Tournament Level Classification:
+   - Automatically derived from tournament names
+   - Handles Grand Slams, Masters/Premier events, regular tournaments
+
+================================
+QUERY EXAMPLES FOR LLM TEXT2SQL
+================================
+
+1. Player-specific queries:
+   "Show all matches won by Djokovic in 2023"
+   "What is Serena Williams' career win percentage?"
+
+2. Head-to-head queries:
+   "How many times have Federer and Nadal played?"
+   "Show the head-to-head record between Djokovic and Medvedev"
+
+3. Surface analysis:
+   "Who has the most wins on clay courts?"
+   "Show players with over 80% win rate on grass"
+
+4. Tournament queries:
+   "List all Australian Open finals from 2020-2023"
+   "Show ATP 1000 tournament winners in 2024"
+
+5. Ranking-based queries:
+   "Find upsets where a player ranked 50+ beat a top 10 player"
+   "Show matches between top 5 ranked players"
+
+6. Statistical queries:
+   "Who played the most matches in 2023?"
+   "Average ranking of players who won Grand Slams"
+
+================================
+TECHNICAL SPECIFICATIONS
+================================
+
+Database Type: SQLite 3
+File Size: ~15-20 MB (estimated)
+Character Encoding: UTF-8
+Date Format: ISO 8601 (YYYY-MM-DD)
+Integer Range: Standard SQLite INTEGER (64-bit signed)
+Text Collation: Default SQLite collation
+
+Performance Considerations:
+- Primary keys and foreign keys automatically indexed
+- Strategic indexes on commonly queried columns
+- Views pre-computed for complex aggregations
+- Denormalized player names in matches table for faster LLM queries
+
+================================
+FEW-SHOT EXAMPLES FOR LLM TRAINING
+================================
+
+Example 1:
+Human: "Who are the top 5 ATP players by number of wins?"
+SQL: SELECT player_name, total_wins FROM player_match_stats WHERE tour_type = 'ATP' ORDER BY total_wins DESC LIMIT 5;
+Results:
+Sinner J.|153
+Alcaraz C.|151
+Zverev A.|148
+Medvedev D.|135
+Rublev A.|119
+
+Example 2:
+Human: "Show me the head-to-head record between Medvedev and Sinner"
+SQL: SELECT player1, player2, h2h_matches, player1_wins, player2_wins FROM head_to_head WHERE (player1 = 'Medvedev D.' AND player2 = 'Sinner J.') OR (player1 = 'Sinner J.' AND player2 = 'Medvedev D.');
+Results:
+Medvedev D.|Sinner J.|11|3|8
+
+Example 3:
+Human: "Which players have won the most matches on clay courts?"
+SQL: SELECT winner_name, COUNT(*) as clay_wins FROM tennis_matches WHERE surface_type = 'Clay' GROUP BY winner_name ORDER BY clay_wins DESC LIMIT 5;
+Results:
+Alcaraz C.|59
+Zverev A.|58
+Ruud C.|57
+Swiatek I.|56
+Cerundolo F.|55
+
+Example 4:
+Human: "How many matches were played in each year?"
+SQL: SELECT year, COUNT(*) as matches FROM tennis_matches GROUP BY year ORDER BY year;
+Results:
+2023|5205
+2024|5251
+2025|2847
+
+Example 5:
+Human: "Show me all Australian Open finals in the dataset"
+SQL: SELECT match_date, tour_type, winner_name, loser_name FROM tennis_matches WHERE tournament_name LIKE '%Australian Open%' AND tournament_round = 'Final' ORDER BY match_date;
+Results:
+2023-01-28|WTA|Sabalenka A.|Rybakina E.
+2023-01-29|ATP|Djokovic N.|Tsitsipas S.
+2024-01-27|WTA|Sabalenka A.|Zheng Q.
+2024-01-28|ATP|Sinner J.|Medvedev D.
+2025-01-26|ATP|Sinner J.|Zverev A.
+
+Example 6:
+Human: "What's Djokovic's win percentage in 2024?"
+SQL: SELECT p.player_name, COUNT(*) as total_matches, SUM(CASE WHEN m.winner_name = p.player_name THEN 1 ELSE 0 END) as wins, ROUND(SUM(CASE WHEN m.winner_name = p.player_name THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as win_percentage FROM players p JOIN tennis_matches m ON (m.winner_id = p.player_id OR m.loser_id = p.player_id) WHERE p.player_name = 'Djokovic N.' AND m.year = 2024 GROUP BY p.player_name;
+Results:
+Djokovic N.|37|24|64.86
+
+Example 7:
+Human: "Show me upsets where a player ranked 50 or lower beat a top 10 player"
+SQL: SELECT match_date, winner_name, winner_rank, loser_name, loser_rank, tournament_name FROM tennis_matches WHERE winner_rank >= 50 AND loser_rank <= 10 AND winner_rank IS NOT NULL AND loser_rank IS NOT NULL ORDER BY match_date DESC LIMIT 5;
+Results:
+2025-06-25|Bergs Z.|51|Hurkacz H.|7|Mallorca Championships
+2025-06-20|Hanfmann Y.|54|Rublev A.|6|Halle Open
+2025-06-13|Marozsan F.|53|Hurkacz H.|7|Stuttgart Open
+2025-05-29|Moutet C.|79|Rublev A.|8|French Open
+2025-05-28|Zeppieri G.|133|Hurkacz H.|8|French Open
+
+Example 8:
+Human: "Which surface does Alcaraz perform best on?"
+SQL: SELECT surface_type, matches_played, wins, win_percentage FROM surface_performance WHERE player_name = 'Alcaraz C.' ORDER BY win_percentage DESC;
+Results:
+Grass|26|25|96.15
+Clay|66|59|89.39
+Hard|85|67|78.82
+
+Example 9:
+Human: "Show me all Grand Slam winners in 2024"
+SQL: SELECT match_date, tournament_name, tour_type, winner_name FROM tennis_matches WHERE year = 2024 AND tournament_level = 'Grand Slam' AND tournament_round = 'Final' ORDER BY match_date;
+Results:
+2024-01-27|Australian Open|WTA|Sabalenka A.
+2024-01-28|Australian Open|ATP|Sinner J.
+2024-06-08|French Open|WTA|Swiatek I.
+2024-06-09|French Open|ATP|Alcaraz C.
+2024-07-13|Wimbledon|WTA|Krejcikova B.
+2024-07-14|Wimbledon|ATP|Alcaraz C.
+2024-09-07|US Open|WTA|Sabalenka A.
+2024-09-08|US Open|ATP|Sinner J.
+
+Example 10:
+Human: "Find players who have beaten both Djokovic and Nadal"
+SQL: SELECT DISTINCT winner_name FROM tennis_matches WHERE loser_name IN ('Djokovic N.', 'Nadal R.') GROUP BY winner_name HAVING COUNT(DISTINCT loser_name) = 2;
+Results:
+Alcaraz C.
+Medvedev D.
+Rublev A.
+Zverev A.
