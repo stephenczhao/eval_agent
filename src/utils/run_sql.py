@@ -188,23 +188,27 @@ def run_sql_query(query: str, db_path: str = "tennis_data/tennis_matches.db",
                 'formatted': ''
             }
         
-        # Execute query
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute(query)
-        
-        # Get column names
-        columns = [description[0] for description in cursor.description] if cursor.description else []
-        
-        # Get rows (limit to max_rows)
-        all_rows = cursor.fetchall()
-        limited_rows = all_rows[:max_rows] if max_rows > 0 else all_rows
-        
-        # Convert to list of lists for JSON serialization
-        rows = [list(row) for row in limited_rows]
-        
-        conn.close()
+        # Execute query with proper connection management
+        conn = None
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute(query)
+            
+            # Get column names
+            columns = [description[0] for description in cursor.description] if cursor.description else []
+            
+            # Get rows (limit to max_rows)
+            all_rows = cursor.fetchall()
+            limited_rows = all_rows[:max_rows] if max_rows > 0 else all_rows
+            
+            # Convert to list of lists for JSON serialization
+            rows = [list(row) for row in limited_rows]
+            
+        finally:
+            if conn:
+                conn.close()
         
         # Format output if requested
         formatted_output = ""
