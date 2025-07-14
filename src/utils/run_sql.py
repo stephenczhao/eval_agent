@@ -114,7 +114,7 @@ from pathlib import Path
 import csv
 from typing import List, Tuple, Any, Optional, Dict, Union
 
-def run_sql_query(query: str, db_path: str = "tennis_matches.db", 
+def run_sql_query(query: str, db_path: str = "tennis_data/tennis_matches.db", 
                   format_output: bool = True, max_rows: int = 100) -> Dict[str, Any]:
     """
     Execute a SQL query against the tennis matches database and return structured results.
@@ -131,7 +131,7 @@ def run_sql_query(query: str, db_path: str = "tennis_matches.db",
     
     Args:
         query (str): SQL query to execute against the tennis database
-        db_path (str, optional): Path to SQLite database file. Defaults to "tennis_matches.db"
+        db_path (str, optional): Path to SQLite database file. Defaults to "tennis_data/tennis_matches.db"
         format_output (bool, optional): Whether to include a formatted table string for display. 
                                       Defaults to True.
         max_rows (int, optional): Maximum number of rows to return. Use 0 for unlimited. 
@@ -275,7 +275,7 @@ def _format_query_results(columns: List[str], rows: List[Tuple[Any, ...]],
         result.append(format_str.format(*formatted_row))
     
     # Add summary
-    if total_rows > max_rows:
+    if max_rows > 0 and total_rows > max_rows:
         result.append(f"\n... ({total_rows - max_rows} more rows not shown)")
     result.append(f"\nTotal rows: {total_rows}")
     
@@ -284,7 +284,7 @@ def _format_query_results(columns: List[str], rows: List[Tuple[Any, ...]],
 class TennisDBRunner:
     """Tennis database query runner with formatting and export capabilities."""
     
-    def __init__(self, db_path: str = "tennis_matches.db"):
+    def __init__(self, db_path: str = "tennis_data/tennis_matches.db"):
         """Initialize with database path."""
         self.db_path = Path(db_path)
         if not self.db_path.exists():
@@ -543,8 +543,8 @@ def main():
     
     parser.add_argument(
         '--db', 
-        default='tennis_matches.db',
-        help='Path to database file (default: tennis_matches.db)'
+        default='tennis_data/tennis_matches.db',
+        help='Path to database file (default: tennis_data/tennis_matches.db)'
     )
     
     parser.add_argument(
@@ -595,10 +595,11 @@ def main():
 
 if __name__ == "__main__":
     # If called directly, run command line interface
+    # run the following to test the database
     if len(sys.argv) == 1:
         # No arguments - check if we should run a quick test
         import os
-        if os.path.exists("tennis_matches.db"):
+        if os.path.exists("tennis_data/tennis_matches.db"):
             print("Testing run_sql_query function:")
             print("=" * 50)
             
@@ -607,8 +608,8 @@ if __name__ == "__main__":
             if result['success']:
                 print("✓ Function working correctly!")
                 print(result['formatted'])
-                print("\nTo use interactively: python run_sql.py")
-                print("To run specific query: python run_sql.py \"YOUR_SQL_QUERY\"")
+                print("\nTo use interactively: python src/utils/run_sql.py")
+                print("To run specific query: python src/utils/run_sql.py \"YOUR_SQL_QUERY\"")
                 print("\nFor LLM agents, import the function:")
                 print("  from run_sql import run_sql_query")
                 print("  result = run_sql_query('SELECT * FROM players LIMIT 5')")

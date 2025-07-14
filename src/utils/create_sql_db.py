@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 from pathlib import Path
 import logging
+import sys
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -235,17 +236,18 @@ def create_tennis_database(db_path='tennis_matches.db'):
     
     # Load and process ATP data
     logger.info("Loading ATP data...")
-    atp_file = Path('atp_men/atp_2023-2025.csv')
+    atp_file = Path('tennis_data/data/atp_men/atp_2023-2025.csv')
     if atp_file.exists():
         atp_df = pd.read_csv(atp_file)
         
         # Process ATP data
         for _, row in atp_df.iterrows():
             try:
-                # Parse date
-                match_date = pd.to_datetime(row['Date']).date()
-                year = match_date.year
-                month = match_date.month
+                # Parse date and convert to ISO format string to avoid deprecation warnings
+                date_obj = pd.to_datetime(row['Date']).date()
+                match_date = date_obj.isoformat()  # Convert to ISO format string (YYYY-MM-DD)
+                year = date_obj.year
+                month = date_obj.month
                 
                 # Calculate derived fields
                 winner_rank = row['WRank'] if pd.notna(row['WRank']) else None
@@ -298,17 +300,18 @@ def create_tennis_database(db_path='tennis_matches.db'):
     
     # Load and process WTA data
     logger.info("Loading WTA data...")
-    wta_file = Path('wta_women/wta_2023-2025.csv')
+    wta_file = Path('tennis_data/data/wta_women/wta_2023-2025.csv')
     if wta_file.exists():
         wta_df = pd.read_csv(wta_file)
         
         # Process WTA data
         for _, row in wta_df.iterrows():
             try:
-                # Parse date
-                match_date = pd.to_datetime(row['Date']).date()
-                year = match_date.year
-                month = match_date.month
+                # Parse date and convert to ISO format string to avoid deprecation warnings
+                date_obj = pd.to_datetime(row['Date']).date()
+                match_date = date_obj.isoformat()  # Convert to ISO format string (YYYY-MM-DD)
+                year = date_obj.year
+                month = date_obj.month
                 
                 # Calculate derived fields
                 winner_rank = row['WRank'] if pd.notna(row['WRank']) else None
@@ -494,8 +497,56 @@ def create_tennis_database(db_path='tennis_matches.db'):
     return db_path
 
 if __name__ == "__main__":
+
+    # Preprocess and merge excel data
+    atp_path = "tennis_data/data/atp_men/"
+    wta_path = "tennis_data/data/wta_women/"
+
+    atp_2023 = pd.read_excel(atp_path + "2023.xlsx")
+    wta_2023 = pd.read_excel(wta_path + "2023.xlsx")
+    print("atp_2023: ", atp_2023.shape)
+    print("wta_2023: ", wta_2023.shape, "\n")
+
+    atp_2024 = pd.read_excel(atp_path + "2024.xlsx")
+    wta_2024 = pd.read_excel(wta_path + "2024.xlsx")
+    print("atp_2024: ", atp_2024.shape)
+    print("wta_2024: ", wta_2024.shape, "\n")
+
+    atp_2025 = pd.read_excel(atp_path + "2025.xlsx")
+    wta_2025 = pd.read_excel(wta_path + "2025.xlsx")
+    print("atp_2025: ", atp_2025.shape)
+    print("wta_2025: ", wta_2025.shape, "\n")
+
+    # merge atp and wta data
+    atp_all = pd.concat([atp_2023, atp_2024, atp_2025])
+    wta_all = pd.concat([wta_2023, wta_2024, wta_2025])
+
+    # save merged data
+    atp_all.to_csv("tennis_data/data/atp_men/atp_2023-2025.csv", index=False)
+    wta_all.to_csv("tennis_data/data/wta_women/wta_2023-2025.csv", index=False)
+
+    print("ATP columns: ", atp_all.columns)
+    print("WTA columns: ", wta_all.columns)
+
+    # Check if database already exists and ask user for confirmation
+    db_path = 'tennis_data/tennis_matches.db'
+    if Path(db_path).exists():
+        print(f"\nDatabase '{db_path}' already exists.")
+        user_input = input("Do you want to reinitialize it? This will delete the existing database. (Y/N): ").strip().upper()
+        
+        if user_input in ['Y', 'YES']:
+            print(f"Deleting existing database '{db_path}'...")
+            Path(db_path).unlink()
+            print("Database deleted successfully.")
+        elif user_input in ['N', 'NO']:
+            print("Script stopped. Existing database preserved.")
+            sys.exit(0)
+        else:
+            print("Invalid input. Please enter Y or N. Script stopped.")
+            sys.exit(1)
+
     # Create the database
-    db_path = create_tennis_database()
+    db_path = create_tennis_database(db_path)
     
     # Test the database with some sample queries
     conn = sqlite3.connect(db_path)
