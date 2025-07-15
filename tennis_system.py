@@ -23,7 +23,8 @@ os.chdir(current_dir)
 
 try:
     from config.settings import TennisConfig, validate_config
-    from utils.memory_manager import MemoryManager, create_session_id
+    from utils.simple_memory_manager import SimpleMemoryManager, create_session_id
+    from utils.context_aware_classifier import classify_tennis_query, refine_query_with_context
     from agents.orchestrator import OrchestratorAgent
     from tools.sql_tools import execute_sql_query, generate_sql_query, interpret_sql_results
     from tools.search_tools import tavily_search_tool, interpret_search_results, optimize_search_query
@@ -57,7 +58,7 @@ class TennisIntelligenceSystem:
         
         # Initialize components
         self.config = TennisConfig()
-        self.memory_manager = MemoryManager()
+        self.memory_manager = SimpleMemoryManager()
         self.orchestrator = OrchestratorAgent(self.config, self.memory_manager)
         
         print("✅ Tennis Intelligence System initialized successfully")
@@ -65,61 +66,38 @@ class TennisIntelligenceSystem:
         print(f"🤖 Model: {self.config.default_model}")
         print(f"🧠 Agents: Orchestrator, SQL, Search")
     
-    def _is_tennis_related(self, user_query: str) -> bool:
+    def _classify_and_refine_query(self, user_query: str, session_id: str) -> tuple[bool, str, str]:
         """
-        Simple LLM classifier to determine if the query is tennis-related.
+        Context-aware tennis classifier and query refiner.
         
         Args:
             user_query: The user's question
+            session_id: Session ID for conversation history
             
         Returns:
-            True if tennis-related, False otherwise
+            Tuple of (is_tennis_related, refined_query, reasoning)
         """
         try:
-            llm = ChatOpenAI(model=self.config.default_model, temperature=0.1)
+            # Get conversation history
+            conversation_history = self.memory_manager.get_conversation_history(session_id, max_pairs=5)
             
-            classifier_prompt = f"""Is this query related to tennis? Answer with only YES or NO.
-
-Query: "{user_query}"
-
-CONTEXT: This is a tennis intelligence system that answers questions about tennis players, matches, tournaments, rankings, and related topics.
-
-Consider tennis-related if it mentions or asks about:
-- Tennis players (by name or in general: "who's the best player", "top player", "player rankings")
-- Tennis tournaments ("latest tournament", "who won", "tournament results", "Wimbledon", "US Open", etc.)
-- Tennis matches ("match results", "who played", "match statistics")
-- Tennis rankings ("best player", "top ranked", "world ranking", "#1 player")
-- Tennis techniques, rules, equipment, coaching
-- Tennis statistics, records, results, scores
-- Tennis news, schedules, injuries
-- General sports questions in a tennis context ("who's the best", "who won", "latest results" in a tennis system)
-
-IMPORTANT: Be generous with tennis interpretation. If someone asks "who's the best player?" in a tennis system, that's clearly asking about tennis players. Similarly, "who won the latest tournament?" is asking about tennis tournaments.
-
-Examples:
-- "who's the best player?" → YES (asking about tennis players)
-- "who won the latest tournament?" → YES (asking about tennis tournament)
-- "what's Federer's record?" → YES (tennis player statistics)
-- "who's ranked #1?" → YES (tennis rankings)
-- "latest match results" → YES (tennis matches)
-- "what's the weather like?" → NO (not tennis-related)
-- "help me with math" → NO (not tennis-related)
-
-Answer YES for tennis queries, NO for clearly non-tennis topics.
-
-Response (YES or NO only):"""
-
-            response = llm.invoke([
-                SystemMessage(content="You are a tennis topic classifier. Be generous with tennis context. Respond with only YES or NO."),
-                HumanMessage(content=classifier_prompt)
-            ])
+            # Refine query with context
+            refinement_result = refine_query_with_context(
+                user_query, 
+                conversation_history, 
+                self.config
+            )
             
-            return response.content.strip().upper() == "YES"
+            return (
+                refinement_result.is_tennis_related,
+                refinement_result.refined_query,
+                refinement_result.reasoning
+            )
             
         except Exception as e:
-            print(f"⚠️ Tennis classifier error: {e}")
+            print(f"⚠️ Tennis classification and refinement error: {e}")
             # Default to allowing the query if classifier fails
-            return True
+            return True, user_query, "Classification failed, allowing query"
     
     def process_query(self, user_query: str, session_id: str) -> Dict[str, Any]:
         """
@@ -135,13 +113,15 @@ Response (YES or NO only):"""
         try:
             start_time = time.time()
             
-            # Step 1: Check if query is tennis-related
-            print(f"\n🎾 Checking if query is tennis-related: '{user_query}'")
-            if not self._is_tennis_related(user_query):
+            # Step 1: Classify and refine query with context
+            print(f"\n🎾 Classifying and refining query: '{user_query}'")
+            is_tennis_related, refined_query, reasoning = self._classify_and_refine_query(user_query, session_id)
+            
+            if not is_tennis_related:
                 non_tennis_response = "I'm designed specifically to answer tennis-related questions. Please ask me about tennis players, matches, tournaments, rankings, or tennis techniques."
                 
                 execution_time = time.time() - start_time
-                print(f"❌ Non-tennis query detected")
+                print(f"❌ Non-tennis query detected: {reasoning}")
                 
                 return {
                     'response': non_tennis_response,
@@ -152,11 +132,13 @@ Response (YES or NO only):"""
                 }
             
             print(f"✅ Tennis-related query confirmed")
+            if refined_query != user_query:
+                print(f"🔄 Query refined: '{user_query}' → '{refined_query}'")
             
             # Step 2: Orchestrator analyzes query and determines routing
-            print(f"\n🧠 Orchestrator analyzing: '{user_query}'")
+            print(f"\n🧠 Orchestrator analyzing: '{refined_query}'")
             routing_result = self.orchestrator.analyze_and_route(
-                user_query, 
+                refined_query, 
                 session_id
             )
             
@@ -186,32 +168,30 @@ Response (YES or NO only):"""
             search_results = None
             
             if sql_needed:
-                sql_results = self._execute_sql_agent(user_query, routing_result)
+                sql_results = self._execute_sql_agent(refined_query, routing_result)
+                
+                # If SQL fails, fall back to search
+                if sql_results and not sql_results.get('success', False):
+                    print("⚠️  SQL query failed, falling back to search...")
+                    search_results = self._execute_search_agent(refined_query, routing_result)
+                    search_needed = True
                 
             if search_needed:
-                search_results = self._execute_search_agent(user_query, routing_result)
+                search_results = self._execute_search_agent(refined_query, routing_result)
             
             # Step 4: Synthesize final response
             response = self._synthesize_response(
-                user_query, sql_results, search_results, routing_result
+                refined_query, sql_results, search_results, routing_result
             )
             
             # Store complete conversation in memory
             execution_time = time.time() - start_time
             
-            # Store conversation efficiently
-            entities_to_store = routing_result.get('extracted_entities', [])
-            intent_to_store = routing_result.get('query_analysis', {}).get('intent', 'unknown')
-            
+            # Store conversation (original query + system response)
             self.memory_manager.store_conversation(
                 session_id=session_id,
-                user_query=user_query,
-                system_response=response['response'],
-                sources_used=response.get('sources', []),
-                confidence_score=response.get('confidence', 0.0),
-                execution_time=execution_time,
-                tennis_entities=entities_to_store,
-                query_intent=intent_to_store
+                user_query=user_query,  # Store original query, not refined
+                system_response=response['response']
             )
             
             return response
@@ -226,13 +206,13 @@ Response (YES or NO only):"""
                 'error': True
             }
     
-    def _execute_sql_agent(self, user_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _execute_sql_agent(self, refined_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
         """Execute SQL database queries and interpret results efficiently."""
         print("🗄️  Executing SQL Agent...")
         
         try:
             # Generate and execute SQL query
-            sql_generation = generate_sql_query(user_query)
+            sql_generation = generate_sql_query.invoke({"user_query": refined_query})
             
             if not sql_generation.get('success', False):
                 return {
@@ -242,16 +222,33 @@ Response (YES or NO only):"""
                 }
             
             sql_query = sql_generation.get('sql_query')
-            print(f"✨ Generated SQL: {sql_query[:60]}{'...' if len(sql_query) > 60 else ''}")
+            print(f"✨ Generated SQL Query:")
+            print(f"   {sql_query}")
             
             # Execute the generated query
             results = execute_sql_query.invoke({"query": sql_query})
             print(f"📊 SQL executed: {results.get('row_count', 0)} rows returned")
             
+            # Print the full SQL results
+            if results.get('success', False):
+                print(f"📋 SQL Results:")
+                if results.get('formatted'):
+                    print(results['formatted'])
+                elif results.get('rows'):
+                    print(f"   Columns: {results.get('columns', [])}")
+                    for i, row in enumerate(results['rows'][:10]):  # Show first 10 rows
+                        print(f"   Row {i+1}: {row}")
+                    if len(results['rows']) > 10:
+                        print(f"   ... and {len(results['rows']) - 10} more rows")
+                else:
+                    print("   No data returned")
+            else:
+                print(f"❌ SQL Error: {results.get('error', 'Unknown error')}")
+            
             # Interpret results to natural language
             interpretation = interpret_sql_results.invoke({
                 "sql_results": results,
-                "user_query": user_query
+                "user_query": refined_query
             })
             
             return {
@@ -272,24 +269,26 @@ Response (YES or NO only):"""
                 'has_data': False
             }
     
-    def _execute_search_agent(self, user_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _execute_search_agent(self, refined_query: str, routing_result: Dict[str, Any]) -> Dict[str, Any]:
         """Execute web search and interpret results efficiently."""
         print("🌐 Executing Search Agent...")
         
         try:
             # Optimize search query
             optimization_result = optimize_search_query.invoke({
-                "user_query": user_query,
+                "user_query": refined_query,
                 "context": routing_result.get('routing_decision', {}).get('reasoning', '')
             })
             
-            # Use optimized query if successful, fallback to original if failed
+            # Use optimized query if successful, fallback to refined if failed
             if optimization_result.get('success', False):
-                search_query = optimization_result.get('optimized_query', user_query)
-                print(f"✨ Optimized query: {search_query[:60]}{'...' if len(search_query) > 60 else ''}")
+                search_query = optimization_result.get('optimized_query', refined_query)
+                print(f"✨ Optimized Search Query:")
+                print(f"   {search_query}")
             else:
-                search_query = user_query
-                print(f"⚠️  Using original query: {user_query[:60]}{'...' if len(user_query) > 60 else ''}")
+                search_query = refined_query
+                print(f"⚠️  Using Refined Query:")
+                print(f"   {refined_query}")
             
             # Perform search
             search_results = tavily_search_tool.invoke({"query": search_query})
@@ -297,10 +296,27 @@ Response (YES or NO only):"""
             result_count = search_results.get('result_count', 0)
             print(f"🔍 Search completed: {result_count} results found")
             
+            # Print detailed search results
+            raw_results = search_results.get('raw_results', {})
+            if raw_results.get('results'):
+                print(f"📋 Search Results:")
+                for i, result in enumerate(raw_results['results'][:5]):  # Show first 5 results
+                    title = result.get('title', 'No title')
+                    url = result.get('url', 'No URL')
+                    content = result.get('content', 'No content')[:200]  # First 200 chars
+                    print(f"   Result {i+1}: {title}")
+                    print(f"      URL: {url}")
+                    print(f"      Content: {content}{'...' if len(result.get('content', '')) > 200 else ''}")
+                    print()
+                if len(raw_results['results']) > 5:
+                    print(f"   ... and {len(raw_results['results']) - 5} more results")
+            else:
+                print("   No search results returned")
+            
             # Interpret results to natural language
             interpretation = interpret_search_results.invoke({
                 "search_results": search_results,
-                "user_query": user_query
+                "user_query": refined_query
             })
             
             return {
@@ -323,7 +339,7 @@ Response (YES or NO only):"""
     
     def _synthesize_response(
         self,
-        user_query: str,
+        refined_query: str,
         sql_results: Dict[str, Any],
         search_results: Dict[str, Any],
         routing_result: Dict[str, Any]
@@ -370,6 +386,15 @@ Response (YES or NO only):"""
         if search_success:
             confidences.append(search_results.get('confidence', 0.5))
         
+        # Handle case where no successful results were obtained
+        if not sql_success and not search_success:
+            return {
+                'response': "I couldn't find specific information about your tennis question. Please try rephrasing your query or asking about a different aspect of tennis.",
+                'confidence': 0.1,
+                'sources': ['System'],
+                'no_data_found': True
+            }
+        
         overall_confidence = sum(confidences) / len(confidences) if confidences else 0.3
         
         try:
@@ -378,7 +403,7 @@ Response (YES or NO only):"""
             # Create efficient synthesis prompt
             synthesis_prompt = f"""Create a comprehensive tennis response using the analyzed information.
 
-USER QUESTION: "{user_query}"
+USER QUESTION: "{refined_query}"
 
 CURRENT CONTEXT: Today is {current_date_str} ({current_year})
 
@@ -392,6 +417,8 @@ Your task: Combine these insights into a clear, conversational response that dir
 3. **Context**: Briefly explain how you found this information (database analysis and/or current web search)
 
 Be factual, specific, and engaging. Use the information provided above - don't add information not contained in the analysis results.
+
+IMPORTANT: Keep your response to 100 words or less for memory efficiency.
 
 Response:"""
 

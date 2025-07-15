@@ -16,12 +16,14 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 try:
-    from src.config.settings import TennisConfig, get_agent_prompt
+    from src.config.settings import TennisConfig
+    from src.config.optimized_prompts import get_optimized_prompt
     from src.tools.text_processing_tools import extract_key_entities
     from src.utils.memory_manager import MemoryManager
 except ImportError:
     # Fallback for different import contexts
-    from config.settings import TennisConfig, get_agent_prompt
+    from config.settings import TennisConfig
+    from config.optimized_prompts import get_optimized_prompt
     from tools.text_processing_tools import extract_key_entities
     from utils.memory_manager import MemoryManager
 
@@ -51,7 +53,7 @@ class OrchestratorAgent:
             temperature=config.temperature,
             api_key=config.openai_api_key
         )
-        self.system_prompt = get_agent_prompt('orchestrator')
+        self.system_prompt = get_optimized_prompt('orchestrator')
     
     def _extract_json_from_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -221,8 +223,8 @@ class OrchestratorAgent:
                 tennis_entities.extend(entities)
             
             # Get relevant conversation context
-            relevant_context = self.memory_manager.get_relevant_context(
-                session_id, user_query, max_entries=3
+            relevant_context = self.memory_manager.get_conversation_history(
+                session_id, max_pairs=3
             )
             
             # Create analysis prompt with context
@@ -314,8 +316,8 @@ class OrchestratorAgent:
         if relevant_context:
             # Get the most recent relevant conversation
             most_recent = relevant_context[0]  # Most relevant is first
-            prev_query = most_recent.get('user_query', '')
-            prev_response_snippet = most_recent.get('system_response', '')[:300]  # First 300 chars
+            prev_query = most_recent.user_query
+            prev_response_snippet = most_recent.system_response[:300]  # First 300 chars
             
             context_summary = f"""
 RECENT CONVERSATION CONTEXT:

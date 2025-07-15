@@ -10,18 +10,14 @@ This package contains system configuration, prompts, and settings:
 
 from .settings import (
     TennisConfig,
-    DATABASE_SCHEMA_CONTEXT,
-    ORCHESTRATOR_PROMPT,
-    SQL_AGENT_PROMPT,
-    SEARCH_AGENT_PROMPT,
-    SYNTHESIZER_PROMPT
+    get_agent_prompt,
+    get_database_schema_context,
+    validate_config
 )
 
 __all__ = [
     "TennisConfig",
-    "DATABASE_SCHEMA_CONTEXT",
-    "ORCHESTRATOR_PROMPT",
-    "SQL_AGENT_PROMPT", 
-    "SEARCH_AGENT_PROMPT",
-    "SYNTHESIZER_PROMPT"
+    "get_agent_prompt",
+    "get_database_schema_context",
+    "validate_config"
 ] 
