@@ -8,6 +8,7 @@ SQL database querying tools for tennis data analysis.
 import sqlite3
 import json
 import traceback
+import os
 from typing import Dict, Any
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,12 @@ except ImportError:
     # Fallback for different import contexts
     from config.settings import TennisConfig
     from config.optimized_prompts import get_optimized_prompt
+
+
+def _debug_print(message: str) -> None:
+    """Print message only if debug mode is enabled via environment variable."""
+    if os.environ.get('TENNIS_DEBUG', 'False').lower() == 'true':
+        print(message)
 
 
 # Get configuration for database path
@@ -113,10 +120,10 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
     start_time = datetime.now()
     
     try:
-        print(f"🗄️ Starting SQL database query for: '{user_query}'")
+        _debug_print(f"🗄️ Starting SQL database query for: '{user_query}'")
         
         # Step 1: Generate SQL Query
-        print("✨ Step 1: Generating SQL query...")
+        _debug_print("✨ Step 1: Generating SQL query...")
         # Handle pronoun resolution - look for context clues in the query
         enhanced_query = _resolve_pronouns_in_query(user_query)
         sql_generation_result = generate_sql_query.invoke({"user_query": enhanced_query})
@@ -130,10 +137,10 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
             }
         
         sql_query = sql_generation_result.get('sql_query')
-        print(f"   ✅ Generated SQL: {sql_query}")
+        _debug_print(f"   ✅ Generated SQL: {sql_query}")
         
         # Step 2: Execute SQL Query
-        print("📊 Step 2: Executing SQL query...")
+        _debug_print("📊 Step 2: Executing SQL query...")
         execution_result = execute_sql_query.invoke({"query": sql_query})
         
         if not execution_result.get('success', False):
@@ -146,15 +153,15 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
             }
         
         row_count = execution_result.get('row_count', 0)
-        print(f"   ✅ Executed successfully: {row_count} rows returned")
+        _debug_print(f"   ✅ Executed successfully: {row_count} rows returned")
         
         # Print sample results for debugging
         if execution_result.get('rows'):
             sample_rows = execution_result['rows'][:3]  # First 3 rows
-            print(f"   📋 Sample data: {sample_rows}")
+            _debug_print(f"   📋 Sample data: {sample_rows}")
         
         # Step 3: Interpret Results
-        print("🎾 Step 3: Interpreting results...")
+        _debug_print("🎾 Step 3: Interpreting results...")
         interpretation_result = interpret_sql_results.invoke({
             "sql_results": execution_result,
             "user_query": user_query
@@ -171,11 +178,11 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
             }
         
         interpretation = interpretation_result.get('interpretation', '')
-        print(f"   ✅ Interpretation complete: {interpretation[:100]}{'...' if len(interpretation) > 100 else ''}")
+        _debug_print(f"   ✅ Interpretation complete: {interpretation[:100]}{'...' if len(interpretation) > 100 else ''}")
         
         # Return comprehensive results
         processing_time = (datetime.now() - start_time).total_seconds()
-        print(f"🎯 SQL database query finished in {processing_time:.2f}s")
+        _debug_print(f"🎯 SQL database query finished in {processing_time:.2f}s")
         
         return {
             'success': True,
@@ -195,7 +202,7 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
         
     except Exception as e:
         error_msg = f"Complete SQL analysis failed: {str(e)}"
-        print(f"❌ {error_msg}")
+        _debug_print(f"❌ {error_msg}")
         
         return {
             'success': False,

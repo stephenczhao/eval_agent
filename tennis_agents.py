@@ -48,7 +48,7 @@ class TennisIntelligenceSystem:
     enabling comprehensive evaluation with judgeval.
     """
     
-    def __init__(self):
+    def __init__(self, debug: bool = False):
         """Initialize the tennis intelligence system with LangGraph orchestrator."""
         # Validate configuration
         config_issues = validate_config()
@@ -60,15 +60,18 @@ class TennisIntelligenceSystem:
         
         # Initialize components
         self.config = TennisConfig()
+        self.debug = debug
         
         # Always use LangGraph orchestrator with built-in memory
-        print("🚀 Using LangGraph orchestrator with built-in memory and official tool calling")
-        self.orchestrator = LangGraphTennisOrchestrator(self.config)
+        if self.debug:
+            print("🚀 Using LangGraph orchestrator with built-in memory and official tool calling")
+        self.orchestrator = LangGraphTennisOrchestrator(self.config, debug=debug)
         
-        print("✅ Tennis Intelligence System initialized successfully")
-        print(f"📊 Database: {self.config.database_path}")
-        print(f"🤖 Model: {self.config.default_model}")
-        print(f"🧠 LangGraph Orchestrator with Tool Calling")
+        if self.debug:
+            print("✅ Tennis Intelligence System initialized successfully")
+            print(f"📊 Database: {self.config.database_path}")
+            print(f"🤖 Model: {self.config.default_model}")
+            print(f"🧠 LangGraph Orchestrator with Tool Calling")
     
     def process_query(self, user_query: str, session_id: str) -> Dict[str, Any]:
         """
@@ -122,12 +125,18 @@ def main():
     print("🎾 Tennis Intelligence System")
     print("=" * 50)
     
+    # Add debug mode support - can be set here or via environment variable
+    import os
+    debug_mode = os.environ.get('TENNIS_DEBUG', 'False').lower() == 'true'
+    
     try:
         # Initialize system
-        system = TennisIntelligenceSystem()
+        system = TennisIntelligenceSystem(debug=debug_mode)
         session_id = create_session_id()
         
         print(f"\n🎾 Welcome to the Tennis Intelligence System!")
+        if debug_mode:
+            print("🐛 Debug mode enabled - showing detailed processing steps")
         print("Ask me anything about tennis - players, matches, rankings, etc.")
         print("Type 'quit' to exit.\n")
         
@@ -150,12 +159,16 @@ def main():
                 # Display results
                 print(f"\n🤖 Response:")
                 print(f"   {result['response']}")
-                print(f"\n📊 Metadata:")
-                print(f"   • Confidence: {result['confidence']:.2f}")
-                print(f"   • Sources: {', '.join(result['sources'])}")
-                print(f"   • Tools Called: {', '.join(result.get('tools_called', []))}")
-                print(f"   • Processing time: {end_time - start_time:.2f}s")
-                print()
+                
+                # Only show metadata in debug mode
+                if debug_mode:
+                    print(f"\n📊 Metadata:")
+                    print(f"   • Confidence: {result['confidence']:.2f}")
+                    print(f"   • Sources: {', '.join(result['sources'])}")
+                    print(f"   • Tools Called: {', '.join(result.get('tools_called', []))}")
+                    print(f"   • Processing time: {end_time - start_time:.2f}s")
+                
+                print()  # Add spacing
                 
             except KeyboardInterrupt:
                 print("\n👋 Goodbye!")

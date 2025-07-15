@@ -31,6 +31,19 @@ except ImportError:
     from tools.search_tools import online_search
     from tools.text_processing_tools import extract_key_entities
 
+import os
+import time
+import threading
+import itertools
+from datetime import datetime
+from typing import Dict, List, Any, Tuple, Optional
+from dataclasses import dataclass
+
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.tools import tool
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode
+
 
 # Pydantic models for structured output
 class ClassificationResult(BaseModel):
@@ -75,9 +88,10 @@ class LangGraphTennisOrchestrator:
     Uses StateGraph to manage workflow with proper tool calling through ToolNode.
     """
     
-    def __init__(self, config: TennisConfig):
+    def __init__(self, config: TennisConfig, debug: bool = False):
         """Initialize the LangGraph orchestrator."""
         self.config = config
+        self.debug = debug
         
         # Simple session memory storage
         self._session_memory = {}
@@ -105,6 +119,40 @@ class LangGraphTennisOrchestrator:
         # Build the workflow graph
         self.workflow = self._build_workflow()
         
+        # Loading animation setup
+        self._loading_active = False
+        self._loading_thread = None
+
+    def _debug_print(self, message: str) -> None:
+        """Print message only if debug mode is enabled."""
+        if self.debug:
+            print(message)
+
+    def _start_loading_animation(self):
+        """Start the thinking... loading animation"""
+        if not self.debug and not self._loading_active:
+            self._loading_active = True
+            self._loading_thread = threading.Thread(target=self._run_loading_animation)
+            self._loading_thread.daemon = True
+            self._loading_thread.start()
+
+    def _stop_loading_animation(self):
+        """Stop the loading animation"""
+        if self._loading_active:
+            self._loading_active = False
+            if self._loading_thread:
+                self._loading_thread.join(timeout=0.1)
+            # Clear the line
+            if not self.debug:
+                print("\r" + " " * 20 + "\r", end="", flush=True)
+
+    def _run_loading_animation(self):
+        """Run the loading animation in a separate thread"""
+        spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+        while self._loading_active:
+            print(f"\r{next(spinner)} thinking...", end="", flush=True)
+            time.sleep(0.1)
+    
     def _build_workflow(self) -> StateGraph:
         """Build the LangGraph workflow for tennis query processing."""
         
@@ -230,7 +278,7 @@ class LangGraphTennisOrchestrator:
     
     def _classify_query(self, state: TennisState) -> TennisState:
         """Classify and refine the tennis query using structured output."""
-        print(f"🎾 Classifying query: '{state['user_query']}'")
+        self._debug_print(f"🎾 Classifying query: '{state['user_query']}'")
         
         # Get session memory for context
         session_memory = self._get_session_memory(state.get("session_id", "default"))
@@ -302,15 +350,15 @@ class LangGraphTennisOrchestrator:
             
             if result.is_tennis_related:
                 state["refined_query"] = result.refined_query
-                print(f"✅ Tennis query confirmed: {state['refined_query']}")
+                self._debug_print(f"✅ Tennis query confirmed: {state['refined_query']}")
             else:
                 state["error"] = "Non-tennis query detected"
                 state["final_response"] = "I'm designed for tennis-related questions only."
-                print(f"❌ Non-tennis query: {result.reasoning}")
+                self._debug_print(f"❌ Non-tennis query: {result.reasoning}")
                 
         except Exception as e:
             state["refined_query"] = state["user_query"]  # Fallback
-            print(f"⚠️ Classification failed ({str(e)}), proceeding with original query")
+            self._debug_print(f"⚠️ Classification failed ({str(e)}), proceeding with original query")
         
         return state
     
@@ -319,7 +367,7 @@ class LangGraphTennisOrchestrator:
         if state.get("error"):
             return state
             
-        print(f"🧠 Routing query: '{state['refined_query']}'")
+        self._debug_print(f"🧠 Routing query: '{state['refined_query']}'")
         
         # Extract entities first
         entity_extraction = extract_key_entities.invoke({"text": state["refined_query"]})
@@ -367,7 +415,7 @@ class LangGraphTennisOrchestrator:
                 "reasoning": routing_result.reasoning,
                 "priority": routing_result.priority
             }
-            print(f"🎯 Routing: {state['routing_decision']}")
+            self._debug_print(f"🎯 Routing: {state['routing_decision']}")
             
         except Exception as e:
             # Intelligent default routing based on query keywords
@@ -381,7 +429,7 @@ class LangGraphTennisOrchestrator:
                     "reasoning": f"Default search routing for current info query (structured output failed: {str(e)})",
                     "priority": "search_first"
                 }
-                print("🔍 Defaulting to search for current info query")
+                self._debug_print("🔍 Defaulting to search for current info query")
             else:
                 state["routing_decision"] = {
                     "sql_needed": True,
@@ -389,7 +437,7 @@ class LangGraphTennisOrchestrator:
                     "reasoning": f"Default SQL routing for historical query (structured output failed: {str(e)})",
                     "priority": "sql_first"
                 }
-                print("🗄️ Defaulting to SQL for historical query")
+                self._debug_print("🗄️ Defaulting to SQL for historical query")
         
         return state
     
@@ -398,7 +446,7 @@ class LangGraphTennisOrchestrator:
         if state.get("error"):
             return state
             
-        print("🗄️ SQL Agent executing...")
+        self._debug_print("🗄️ SQL Agent executing...")
         
         # Simple and direct: just call the SQL database query tool
         sql_prompt = f"""
@@ -420,10 +468,10 @@ class LangGraphTennisOrchestrator:
         
         # Debug: Print tool calls that were made
         if hasattr(response, 'tool_calls') and response.tool_calls:
-            print(f"🔧 SQL Agent called {len(response.tool_calls)} tools:")
+            self._debug_print(f"🔧 SQL Agent called {len(response.tool_calls)} tools:")
             for tool_call in response.tool_calls:
                 tool_name = tool_call.get('name', 'unknown')
-                print(f"   📞 Calling: {tool_name}")
+                self._debug_print(f"   📞 Calling: {tool_name}")
         
         return state
     
@@ -432,7 +480,7 @@ class LangGraphTennisOrchestrator:
         if state.get("error"):
             return state
             
-        print("🌐 Search Agent executing...")
+        self._debug_print("🌐 Search Agent executing...")
         
         # Prepare message for LLM with tool calling
         search_prompt = f"""
@@ -454,10 +502,10 @@ class LangGraphTennisOrchestrator:
         
         # Debug: Print tool calls that were made
         if hasattr(response, 'tool_calls') and response.tool_calls:
-            print(f"🔧 Search Agent called {len(response.tool_calls)} tools:")
+            self._debug_print(f"🔧 Search Agent called {len(response.tool_calls)} tools:")
             for tool_call in response.tool_calls:
                 tool_name = tool_call.get('name', 'unknown')
-                print(f"   📞 Calling: {tool_name}")
+                self._debug_print(f"   📞 Calling: {tool_name}")
         
         return state
     
@@ -466,7 +514,7 @@ class LangGraphTennisOrchestrator:
         if state.get("error"):
             return state
             
-        print("🧮 Synthesizing final response...")
+        self._debug_print("🧮 Synthesizing final response...")
         
         # Debug: Print tool results for debugging
         self._debug_print_tool_results(state)
@@ -524,90 +572,93 @@ class LangGraphTennisOrchestrator:
         )
         
         if players_mentioned:
-            print(f"🧠 Updated session memory with players: {players_mentioned}")
+            self._debug_print(f"🧠 Updated session memory with players: {players_mentioned}")
         
         return state
     
     def _debug_print_tool_results(self, state: TennisState) -> None:
-        """Debug method to print SQL queries and tool results for debugging."""
-        print("\n📋 DEBUG: Tool Results Summary")
-        print("=" * 50)
+        """Debug helper to print tool results in a formatted way"""
+        if not self.debug or not state.get("messages"):
+            return
+            
+        self._debug_print("\n📋 DEBUG: Tool Results Summary")
+        self._debug_print("=" * 50)
         
         for i, message in enumerate(state["messages"]):
-            print(f"\nMessage {i+1}: {type(message).__name__}")
+            self._debug_print(f"\nMessage {i+1}: {type(message).__name__}")
             
             # Check for tool calls
             if hasattr(message, 'tool_calls') and message.tool_calls:
                 for tool_call in message.tool_calls:
                     tool_name = tool_call.get('name', 'unknown')
-                    print(f"🔧 Tool Call: {tool_name}")
+                    self._debug_print(f"🔧 Tool Call: {tool_name}")
                     
                     # Print tool arguments
                     if 'args' in tool_call:
                         args = tool_call['args']
                         if tool_name == 'generate_sql_query' and 'user_query' in args:
-                            print(f"   🎯 Query: {args['user_query']}")
+                            self._debug_print(f"   🎯 Query: {args['user_query']}")
                         elif tool_name == 'execute_sql_query' and 'query' in args:
-                            print(f"   ✨ Generated SQL:")
-                            print(f"      {args['query']}")
+                            self._debug_print(f"   ✨ Generated SQL:")
+                            self._debug_print(f"      {args['query']}")
                         else:
-                            print(f"   📝 Args: {args}")
+                            self._debug_print(f"   📝 Args: {args}")
             
             # Check for all message content
             if hasattr(message, 'content') and message.content:
                 content = str(message.content)
-                print(f"📄 Content: {content[:150]}{'...' if len(content) > 150 else ''}")
+                self._debug_print(f"📄 Content: {content[:150]}{'...' if len(content) > 150 else ''}")
                 
                 # Try to parse specific tool results
                 if 'query_sql_database' in content.lower() or ('generated_sql' in content.lower() and 'interpretation' in content.lower()):
-                    print(f"   🎯 SQL Database Query Result:")
+                    self._debug_print(f"   🎯 SQL Database Query Result:")
                     try:
                         import json
                         result = json.loads(content)
                         if result.get('success'):
                             if 'generated_sql' in result:
-                                print(f"      ✨ Generated SQL: {result['generated_sql']}")
+                                self._debug_print(f"      ✨ Generated SQL: {result['generated_sql']}")
                             if 'row_count' in result:
-                                print(f"      📊 Rows returned: {result['row_count']}")
+                                self._debug_print(f"      📊 Rows returned: {result['row_count']}")
                             if 'interpretation' in result:
-                                print(f"      💬 Interpretation: {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
+                                self._debug_print(f"      💬 Interpretation: {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
                             if 'tools_called' in result:
-                                print(f"      🔧 Tools used: {result['tools_called']}")
+                                self._debug_print(f"      🔧 Tools used: {result['tools_called']}")
                         else:
-                            print(f"      ❌ Failed: {result.get('error', 'Unknown error')}")
+                            self._debug_print(f"      ❌ Failed: {result.get('error', 'Unknown error')}")
                     except:
-                        print(f"      {content[:300]}{'...' if len(content) > 300 else ''}")
+                        self._debug_print(f"      {content[:300]}{'...' if len(content) > 300 else ''}")
                 
                 elif 'online_search' in content.lower() or ('optimized_query' in content.lower() and 'interpretation' in content.lower()):
-                    print(f"   🌐 Online Search Result:")
+                    self._debug_print(f"   🌐 Online Search Result:")
                     try:
                         import json
                         result = json.loads(content)
                         if result.get('success'):
                             if 'optimized_query' in result:
-                                print(f"      🔍 Optimized query: {result['optimized_query']}")
+                                self._debug_print(f"      🔍 Optimized query: {result['optimized_query']}")
                             if 'result_count' in result:
-                                print(f"      📊 Results found: {result['result_count']}")
+                                self._debug_print(f"      📊 Results found: {result['result_count']}")
                             if 'interpretation' in result:
-                                print(f"      💬 Interpretation: {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
+                                self._debug_print(f"      💬 Interpretation: {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
                             if 'tools_called' in result:
-                                print(f"      🔧 Tools used: {result['tools_called']}")
+                                self._debug_print(f"      🔧 Tools used: {result['tools_called']}")
                         else:
-                            print(f"      ❌ Failed: {result.get('error', 'Unknown error')}")
+                            self._debug_print(f"      ❌ Failed: {result.get('error', 'Unknown error')}")
                     except:
-                        print(f"      {content[:300]}{'...' if len(content) > 300 else ''}")
+                        self._debug_print(f"      {content[:300]}{'...' if len(content) > 300 else ''}")
                 
                 elif 'interpretation' in content.lower():
-                    print(f"   🎾 Other Tool Result:")
+                    self._debug_print(f"   🎾 Other Tool Result:")
                     try:
                         import json
                         result = json.loads(content)
                         if 'interpretation' in result:
-                            print(f"      💬 {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
+                            self._debug_print(f"      💬 {result['interpretation'][:200]}{'...' if len(result['interpretation']) > 200 else ''}")
                     except:
-                        print(f"      {content[:200]}{'...' if len(content) > 200 else ''}")
+                        self._debug_print(f"      {content[:200]}{'...' if len(content) > 200 else ''}")
         
-        print("=" * 50)
+        self._debug_print("=" * 50)
     
     # Conditional routing functions
     def _should_route_to_sql(self, state: TennisState) -> str:
@@ -684,26 +735,31 @@ class LangGraphTennisOrchestrator:
     
     def process_query(self, user_query: str, session_id: str) -> Dict[str, Any]:
         """Process a tennis query through the LangGraph workflow."""
-        print(f"\n🚀 LangGraph Processing: '{user_query}'")
+        start_time = time.time()
         
-        # Initialize state
-        initial_state = TennisState(
-            messages=[],
-            user_query=user_query,
-            refined_query="",
-            routing_decision={},
-            sql_results=None,
-            search_results=None,
-            final_response=None,
-            confidence=0.0,
-            sources=[],
-            error=None,
-            session_id=session_id,
-            mentioned_players=[],
-            conversation_context=None
-        )
+        # Start loading animation
+        self._start_loading_animation()
         
         try:
+            self._debug_print(f"\n🚀 LangGraph Processing: '{user_query}'")
+            
+            # Initialize state
+            initial_state = TennisState(
+                messages=[],
+                user_query=user_query,
+                refined_query="",
+                routing_decision={},
+                sql_results=None,
+                search_results=None,
+                final_response=None,
+                confidence=0.0,
+                sources=[],
+                error=None,
+                session_id=session_id,
+                mentioned_players=[],
+                conversation_context=None
+            )
+            
             # Run the workflow
             final_state = self.workflow.invoke(initial_state)
             
@@ -713,6 +769,8 @@ class LangGraphTennisOrchestrator:
             sources = final_state.get("sources", ["System"])
             error = final_state.get("error")
             
+            processing_time = time.time() - start_time
+            
             return {
                 'response': response,
                 'confidence': confidence,
@@ -720,16 +778,21 @@ class LangGraphTennisOrchestrator:
                 'sql_data_used': 'Tennis Database' in sources,
                 'search_data_used': 'Web Search' in sources,
                 'error': error is not None,
-                'langgraph_used': True
+                'langgraph_used': True,
+                'processing_time': processing_time
             }
             
         except Exception as e:
             error_msg = f"LangGraph workflow error: {str(e)}"
-            print(f"❌ {error_msg}")
+            self._debug_print(f"❌ {error_msg}")
             return {
                 'response': error_msg,
                 'confidence': 0.0,
                 'sources': ['System'],
                 'error': True,
-                'langgraph_used': True
-            } 
+                'langgraph_used': True,
+                'processing_time': time.time() - start_time
+            }
+        finally:
+            # Stop loading animation
+            self._stop_loading_animation() 

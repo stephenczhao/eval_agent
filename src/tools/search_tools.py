@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+import os
 
 # Import the existing search utility
 import sys
@@ -30,6 +31,12 @@ except ImportError:
     from utils.tavily_search import tavily_search
     from config.settings import TennisConfig
     from config.optimized_prompts import get_optimized_prompt
+
+
+def _debug_print(message: str) -> None:
+    """Print message only if debug mode is enabled via environment variable."""
+    if os.environ.get('TENNIS_DEBUG', 'False').lower() == 'true':
+        print(message)
 
 
 @tool
@@ -71,7 +78,7 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
         words = optimized_query.split()
         if len(words) > 20:
             optimized_query = ' '.join(words[:20])
-            print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
+            _debug_print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
         
         return {
             "success": True,
@@ -250,11 +257,11 @@ def online_search(user_query: str, context: str = "") -> Dict[str, Any]:
     config = TennisConfig()
     start_time = time.time()
     
-    print(f"🌐 Starting complete online search for: '{user_query}'")
+    _debug_print(f"🌐 Starting complete online search for: '{user_query}'")
     
     try:
         # Step 1: Query Optimization
-        print("✨ Step 1: Optimizing search query...")
+        _debug_print("✨ Step 1: Optimizing search query...")
         llm = ChatOpenAI(
             model=config.default_model,
             temperature=0.1,
@@ -278,9 +285,9 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
             words = optimized_query.split()
             if len(words) > 20:
                 optimized_query = ' '.join(words[:20])
-                print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
+                _debug_print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
             
-            print(f"   ✅ Optimized query: {optimized_query}")
+            _debug_print(f"   ✅ Optimized query: {optimized_query}")
         except Exception as e:
             optimized_query = f"tennis {user_query} current rankings latest"
             
@@ -289,16 +296,16 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
             if len(words) > 20:
                 optimized_query = ' '.join(words[:20])
             
-            print(f"   ⚠️ Using fallback optimization: {optimized_query}")
+            _debug_print(f"   ⚠️ Using fallback optimization: {optimized_query}")
         
         # Step 2: Web Search
-        print("🔍 Step 2: Performing web search...")
+        _debug_print("🔍 Step 2: Performing web search...")
         try:
             raw_results = tavily_search(optimized_query)
             results_list = raw_results.get("results", [])
-            print(f"   ✅ Found {len(results_list)} search results")
+            _debug_print(f"   ✅ Found {len(results_list)} search results")
         except Exception as e:
-            print(f"   ❌ Search failed: {str(e)}")
+            _debug_print(f"   ❌ Search failed: {str(e)}")
             return {
                 "success": False,
                 "error": f"Web search failed: {str(e)}",
@@ -319,7 +326,7 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
             }
         
         # Step 3: Result Interpretation
-        print("🎾 Step 3: Interpreting search results...")
+        _debug_print("🎾 Step 3: Interpreting search results...")
         try:
             # Create concise results summary for LLM processing
             results_summary = []
@@ -338,14 +345,14 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
             ])
             
             interpretation = response.content.strip()
-            print(f"   ✅ Interpretation complete: {interpretation[:100]}{'...' if len(interpretation) > 100 else ''}")
+            _debug_print(f"   ✅ Interpretation complete: {interpretation[:100]}{'...' if len(interpretation) > 100 else ''}")
             
         except Exception as e:
             interpretation = f"Found {len(results_list)} search results for tennis query: {user_query}. Results include information from various tennis sources but detailed interpretation is unavailable."
-            print(f"   ⚠️ Using fallback interpretation: {str(e)}")
+            _debug_print(f"   ⚠️ Using fallback interpretation: {str(e)}")
         
         execution_time = time.time() - start_time
-        print(f"🎯 Online search finished in {execution_time:.2f}s")
+        _debug_print(f"🎯 Online search finished in {execution_time:.2f}s")
         
         return {
             "success": True,
@@ -360,7 +367,7 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
         
     except Exception as e:
         error_msg = f"Complete online search failed: {str(e)}"
-        print(f"❌ {error_msg}")
+        _debug_print(f"❌ {error_msg}")
         return {
             "success": False,
             "error": error_msg,
