@@ -30,7 +30,7 @@ class TennisConfig:
     schema_file_path: str = "tennis_data/database_schema.txt"
     
     # Model Configuration
-    default_model: str = "gpt-4-turbo-preview"
+    default_model: str = "gpt-4o-mini"  # Supports structured output
     backup_model: str = "gpt-3.5-turbo"
     temperature: float = 0.1
     max_tokens: int = 2000

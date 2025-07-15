@@ -56,7 +56,9 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
         
         # Use optimized search prompt with datetime context from get_optimized_prompt
         search_prompt = get_optimized_prompt('search')
-        optimization_prompt = f"""USER QUERY: "{user_query}"\nCONTEXT: {context}\n\nCreate search terms for current rankings, official sources (ATP, WTA, ESPN), and recent content. Return only optimized search keywords:"""
+        optimization_prompt = f"""USER QUERY: "{user_query}"\nCONTEXT: {context}\n\nCreate search terms for current rankings, official sources (ATP, WTA, ESPN), and recent content. 
+
+IMPORTANT: Limit your response to 20 words maximum. Return only optimized search keywords:"""
 
         response = llm.invoke([
             SystemMessage(content=search_prompt),
@@ -64,6 +66,12 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
         ])
         
         optimized_query = response.content.strip()
+        
+        # Ensure 20-word limit
+        words = optimized_query.split()
+        if len(words) > 20:
+            optimized_query = ' '.join(words[:20])
+            print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
         
         return {
             "success": True,
@@ -76,6 +84,12 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
     except Exception as e:
         # Fallback to basic optimization
         fallback_query = f"tennis {user_query} current rankings latest"
+        
+        # Ensure fallback doesn't exceed 20 words
+        words = fallback_query.split()
+        if len(words) > 20:
+            fallback_query = ' '.join(words[:20])
+        
         return {
             "success": True,
             "optimized_query": fallback_query,
@@ -213,6 +227,146 @@ def interpret_search_results(search_results: Dict[str, Any], user_query: str) ->
             "confidence": 0.6,
             "source_count": len(results_list),
             "has_data": True
+        }
+
+
+@tool
+def online_search(user_query: str, context: str = "") -> Dict[str, Any]:
+    """
+    Complete online search analysis combining query optimization, web search, and result interpretation.
+    
+    This tool handles the entire search pipeline:
+    1. Optimizes the query for better web search results
+    2. Performs web search using Tavily API
+    3. Interprets and summarizes the results
+    
+    Args:
+        user_query: The user's tennis question or query
+        context: Additional context about the query intent
+        
+    Returns:
+        Dictionary containing complete search analysis with interpretation
+    """
+    config = TennisConfig()
+    start_time = time.time()
+    
+    print(f"🌐 Starting complete online search for: '{user_query}'")
+    
+    try:
+        # Step 1: Query Optimization
+        print("✨ Step 1: Optimizing search query...")
+        llm = ChatOpenAI(
+            model=config.default_model,
+            temperature=0.1,
+            max_tokens=200,
+            api_key=config.openai_api_key
+        )
+        
+        search_prompt = get_optimized_prompt('search')
+        optimization_prompt = f"""USER QUERY: "{user_query}"\nCONTEXT: {context}\n\nCreate search terms for current rankings, official sources (ATP, WTA, ESPN), and recent content. 
+
+IMPORTANT: Limit your response to 20 words maximum. Return only optimized search keywords:"""
+        
+        try:
+            response = llm.invoke([
+                SystemMessage(content=search_prompt),
+                HumanMessage(content=optimization_prompt)
+            ])
+            optimized_query = response.content.strip()
+            
+            # Ensure 20-word limit
+            words = optimized_query.split()
+            if len(words) > 20:
+                optimized_query = ' '.join(words[:20])
+                print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
+            
+            print(f"   ✅ Optimized query: {optimized_query}")
+        except Exception as e:
+            optimized_query = f"tennis {user_query} current rankings latest"
+            
+            # Ensure fallback doesn't exceed 20 words
+            words = optimized_query.split()
+            if len(words) > 20:
+                optimized_query = ' '.join(words[:20])
+            
+            print(f"   ⚠️ Using fallback optimization: {optimized_query}")
+        
+        # Step 2: Web Search
+        print("🔍 Step 2: Performing web search...")
+        try:
+            raw_results = tavily_search(optimized_query)
+            results_list = raw_results.get("results", [])
+            print(f"   ✅ Found {len(results_list)} search results")
+        except Exception as e:
+            print(f"   ❌ Search failed: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Web search failed: {str(e)}",
+                "interpretation": "Unable to perform web search",
+                "optimized_query": optimized_query,
+                "execution_time": time.time() - start_time,
+                "tools_called": ['optimize_search_query', 'tavily_search_tool', 'interpret_search_results']
+            }
+        
+        if not results_list:
+            return {
+                "success": False,
+                "error": "No search results found",
+                "interpretation": "No relevant tennis information found for this query",
+                "optimized_query": optimized_query,
+                "execution_time": time.time() - start_time,
+                "tools_called": ['optimize_search_query', 'tavily_search_tool', 'interpret_search_results']
+            }
+        
+        # Step 3: Result Interpretation
+        print("🎾 Step 3: Interpreting search results...")
+        try:
+            # Create concise results summary for LLM processing
+            results_summary = []
+            for i, result in enumerate(results_list[:5]):  # Limit to first 5 results
+                title = result.get("title", "No title")
+                content = result.get("content", "No content")[:300]  # Limit content length
+                results_summary.append(f"Result {i+1}: {title}\nContent: {content}")
+            
+            results_text = "\n\n".join(results_summary)
+            
+            interpretation_prompt = f"""USER QUESTION: "{user_query}"\n\nSEARCH RESULTS:\n{results_text}\n\nProvide a factual summary in 2-3 sentences focusing on direct answer, current tennis information, and key facts/figures:"""
+
+            response = llm.invoke([
+                SystemMessage(content=search_prompt),
+                HumanMessage(content=interpretation_prompt)
+            ])
+            
+            interpretation = response.content.strip()
+            print(f"   ✅ Interpretation complete: {interpretation[:100]}{'...' if len(interpretation) > 100 else ''}")
+            
+        except Exception as e:
+            interpretation = f"Found {len(results_list)} search results for tennis query: {user_query}. Results include information from various tennis sources but detailed interpretation is unavailable."
+            print(f"   ⚠️ Using fallback interpretation: {str(e)}")
+        
+        execution_time = time.time() - start_time
+        print(f"🎯 Online search finished in {execution_time:.2f}s")
+        
+        return {
+            "success": True,
+            "interpretation": interpretation,
+            "optimized_query": optimized_query,
+            "result_count": len(results_list),
+            "sources": [result.get("url", "") for result in results_list[:5]],
+            "confidence": 0.8 if len(results_list) > 0 else 0.3,
+            "execution_time": execution_time,
+            "tools_called": ['optimize_search_query', 'tavily_search_tool', 'interpret_search_results']
+        }
+        
+    except Exception as e:
+        error_msg = f"Complete online search failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {
+            "success": False,
+            "error": error_msg,
+            "interpretation": f"Online search encountered an error: {str(e)}",
+            "execution_time": time.time() - start_time,
+            "tools_called": ['optimize_search_query', 'tavily_search_tool', 'interpret_search_results']
         }
 
 
