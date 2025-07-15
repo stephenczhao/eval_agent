@@ -49,18 +49,17 @@ from langgraph.prebuilt import ToolNode
 class ClassificationResult(BaseModel):
     """Tennis query classification result."""
     is_tennis_related: bool = Field(description="Whether the query is tennis-related")
+    query_type: Literal["general", "data_specific"] = Field(description="Whether query needs data lookup or can be answered with general knowledge")
     refined_query: str = Field(description="Refined or clarified version of the query")
     reasoning: str = Field(description="Brief explanation of the classification decision")
 
 
 class RoutingResult(BaseModel):
-    """Tennis query routing decision."""
+    """Tennis query routing result."""
     sql_needed: bool = Field(description="Whether SQL database query is needed")
-    search_needed: bool = Field(description="Whether web search is needed")
-    reasoning: str = Field(description="Explanation of routing decision")
-    priority: Literal["sql_first", "search_first", "parallel"] = Field(
-        description="Which data source to prioritize"
-    )
+    search_needed: bool = Field(description="Whether web search is needed") 
+    reasoning: str = Field(description="Reasoning for routing decision")
+    priority: Literal["sql_first", "search_first", "both_parallel"] = Field(description="Execution priority")
 
 
 class TennisState(TypedDict):
@@ -68,6 +67,7 @@ class TennisState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     user_query: str
     refined_query: str
+    query_type: str  # "general" or "data_specific"
     routing_decision: Dict[str, Any]
     sql_results: Optional[Dict[str, Any]]
     search_results: Optional[Dict[str, Any]]
@@ -76,9 +76,6 @@ class TennisState(TypedDict):
     sources: List[str]
     error: Optional[str]
     session_id: str
-    # Simple session memory
-    mentioned_players: List[str]
-    conversation_context: Optional[str]
 
 
 class LangGraphTennisOrchestrator:
@@ -86,15 +83,13 @@ class LangGraphTennisOrchestrator:
     LangGraph-based Tennis Intelligence Orchestrator using official tool calling patterns.
     
     Uses StateGraph to manage workflow with proper tool calling through ToolNode.
+    Leverages LangGraph's built-in message-based memory for conversation context.
     """
     
     def __init__(self, config: TennisConfig, debug: bool = False):
         """Initialize the LangGraph orchestrator."""
         self.config = config
         self.debug = debug
-        
-        # Simple session memory storage
-        self._session_memory = {}
         
         # Initialize LLM with tool binding
         self.llm = ChatOpenAI(
@@ -103,7 +98,7 @@ class LangGraphTennisOrchestrator:
             api_key=config.openai_api_key
         )
         
-        # Define available tools - only 2 main tools now
+        # Define available tools
         self.tools = [
             query_sql_database,
             online_search,
@@ -119,38 +114,44 @@ class LangGraphTennisOrchestrator:
         # Build the workflow graph
         self.workflow = self._build_workflow()
         
-        # Loading animation setup
-        self._loading_active = False
-        self._loading_thread = None
+        # Status indicator setup
+        self._status_active = False
+        self._status_thread = None
+        self._current_status = "thinking..."
 
     def _debug_print(self, message: str) -> None:
         """Print message only if debug mode is enabled."""
         if self.debug:
             print(message)
 
-    def _start_loading_animation(self):
-        """Start the thinking... loading animation"""
-        if not self.debug and not self._loading_active:
-            self._loading_active = True
-            self._loading_thread = threading.Thread(target=self._run_loading_animation)
-            self._loading_thread.daemon = True
-            self._loading_thread.start()
+    def _start_status_indicator(self, status_message: str = "thinking..."):
+        """Start the status indicator with a specific message"""
+        if not self.debug and not self._status_active:
+            self._current_status = status_message
+            self._status_active = True
+            self._status_thread = threading.Thread(target=self._run_status_indicator)
+            self._status_thread.daemon = True
+            self._status_thread.start()
 
-    def _stop_loading_animation(self):
-        """Stop the loading animation"""
-        if self._loading_active:
-            self._loading_active = False
-            if self._loading_thread:
-                self._loading_thread.join(timeout=0.1)
+    def _update_status(self, status_message: str):
+        """Update the current status message"""
+        self._current_status = status_message
+
+    def _stop_status_indicator(self):
+        """Stop the status indicator"""
+        if self._status_active:
+            self._status_active = False
+            if self._status_thread:
+                self._status_thread.join(timeout=0.1)
             # Clear the line
             if not self.debug:
-                print("\r" + " " * 20 + "\r", end="", flush=True)
+                print("\r" + " " * 50 + "\r", end="", flush=True)
 
-    def _run_loading_animation(self):
-        """Run the loading animation in a separate thread"""
+    def _run_status_indicator(self):
+        """Run the status indicator in a separate thread"""
         spinner = itertools.cycle(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
-        while self._loading_active:
-            print(f"\r{next(spinner)} thinking...", end="", flush=True)
+        while self._status_active:
+            print(f"\r{next(spinner)} {self._current_status}", end="", flush=True)
             time.sleep(0.1)
     
     def _build_workflow(self) -> StateGraph:
@@ -159,19 +160,25 @@ class LangGraphTennisOrchestrator:
         # Create the state graph
         workflow = StateGraph(TennisState)
         
-        # Add nodes
+        # Add nodes - simplified workflow since agents handle tools inline
         workflow.add_node("classifier", self._classify_query)
         workflow.add_node("router", self._route_query)
         workflow.add_node("sql_agent", self._sql_agent)
         workflow.add_node("search_agent", self._search_agent)
         workflow.add_node("synthesizer", self._synthesize_response)
-        workflow.add_node("tools", self.tool_node)
         
         # Define the workflow flow
         workflow.set_entry_point("classifier")
         
-        # Classifier routes to router
-        workflow.add_edge("classifier", "router")
+        # Classifier routes conditionally based on query type
+        workflow.add_conditional_edges(
+            "classifier",
+            self._should_route_to_tools,
+            {
+                "general": "synthesizer",
+                "data_specific": "router"
+            }
+        )
         
         # Router conditionally routes to SQL or search agents
         workflow.add_conditional_edges(
@@ -184,183 +191,118 @@ class LangGraphTennisOrchestrator:
             }
         )
         
-        # SQL agent can call tools or go to search (if both needed) or synthesizer
+        # SQL agent routes to search or synthesizer
         workflow.add_conditional_edges(
             "sql_agent",
             self._sql_next_step,
             {
-                "tools": "tools",
                 "search_agent": "search_agent",
                 "synthesizer": "synthesizer"
             }
         )
         
-        # Search agent can call tools or go to synthesizer
-        workflow.add_conditional_edges(
-            "search_agent", 
-            self._search_next_step,
-            {
-                "tools": "tools",
-                "synthesizer": "synthesizer"
-            }
-        )
-        
-        # Tools route back to appropriate agent based on last tool called
-        workflow.add_conditional_edges(
-            "tools",
-            self._tools_next_step,
-            {
-                "sql_agent": "sql_agent",
-                "search_agent": "search_agent",
-                "synthesizer": "synthesizer"
-            }
-        )
+        # Search agent routes to synthesizer
+        workflow.add_edge("search_agent", "synthesizer")
         
         # Synthesizer ends the workflow
         workflow.add_edge("synthesizer", END)
         
         return workflow.compile()
     
-    def _get_session_memory(self, session_id: str) -> Dict[str, Any]:
-        """Get session memory for the given session ID."""
-        if session_id not in self._session_memory:
-            self._session_memory[session_id] = {
-                "mentioned_players": [],
-                "last_player_mentioned": None,
-                "conversation_history": []
-            }
-        return self._session_memory[session_id]
-    
-    def _update_session_memory(self, session_id: str, user_query: str, response: str, players_mentioned: List[str]) -> None:
-        """Update session memory with new conversation data."""
-        memory = self._get_session_memory(session_id)
-        
-        # Update conversation history (keep last 5 exchanges)
-        memory["conversation_history"].append({
-            "query": user_query,
-            "response": response[:200],  # Truncate for memory efficiency
-            "timestamp": datetime.now().isoformat()
-        })
-        if len(memory["conversation_history"]) > 5:
-            memory["conversation_history"] = memory["conversation_history"][-5:]
-        
-        # Update mentioned players
-        for player in players_mentioned:
-            if player not in memory["mentioned_players"]:
-                memory["mentioned_players"].append(player)
-        
-        # Keep track of most recently mentioned player
-        if players_mentioned:
-            memory["last_player_mentioned"] = players_mentioned[-1]
-    
-    def _extract_players_from_response(self, response: str) -> List[str]:
-        """Extract player names from response text."""
-        players = []
-        
-        # Common tennis players to look for
-        known_players = [
-            "Sinner", "Jannik Sinner", "Alcaraz", "Carlos Alcaraz", 
-            "Djokovic", "Novak Djokovic", "Nadal", "Rafael Nadal",
-            "Federer", "Roger Federer", "Sabalenka", "Aryna Sabalenka",
-            "Swiatek", "Iga Swiatek", "Gauff", "Coco Gauff",
-            "Zverev", "Alexander Zverev", "Medvedev", "Daniil Medvedev"
-        ]
-        
-        response_lower = response.lower()
-        for player in known_players:
-            if player.lower() in response_lower:
-                # Use the short form for consistency
-                short_name = player.split()[-1]  # Get last name
-                if short_name not in players:
-                    players.append(short_name)
-        
-        return players
-    
     def _classify_query(self, state: TennisState) -> TennisState:
-        """Classify and refine the tennis query using structured output."""
+        """Classify and refine the tennis query using LangGraph's message history for context."""
         self._debug_print(f"🎾 Classifying query: '{state['user_query']}'")
-        
-        # Get session memory for context
-        session_memory = self._get_session_memory(state.get("session_id", "default"))
-        mentioned_players = session_memory.get("mentioned_players", [])
-        last_player = session_memory.get("last_player_mentioned")
-        conversation_history = session_memory.get("conversation_history", [])
-        
-        # Update state with memory context
-        state["mentioned_players"] = mentioned_players
-        state["conversation_context"] = f"Recent players mentioned: {mentioned_players}" if mentioned_players else "No recent context"
         
         # Create LLM with structured output
         classifier_llm = self.llm.with_structured_output(ClassificationResult)
         
-        # Build context for pronoun resolution
-        context_info = ""
-        if mentioned_players:
-            context_info += f"\nRECENT PLAYERS MENTIONED: {', '.join(mentioned_players)}"
-        if last_player:
-            context_info += f"\nLAST PLAYER MENTIONED: {last_player}"
-        if conversation_history:
-            recent_context = conversation_history[-1] if conversation_history else None
-            if recent_context:
-                context_info += f"\nPREVIOUS QUERY: {recent_context['query']}"
+        # Build context from conversation history using LangGraph's message state
+        conversation_context = ""
+        if state.get("messages"):
+            recent_messages = state["messages"][-4:]  # Get last 4 messages for context
+            if len(recent_messages) > 1:  # If there's conversation history
+                conversation_context = "\n\nCONVERSATION CONTEXT:\n"
+                for i, msg in enumerate(recent_messages[:-1]):  # Skip the current query
+                    if isinstance(msg, HumanMessage):
+                        conversation_context += f"Previous Question: {msg.content}\n"
+                    elif isinstance(msg, AIMessage):
+                        conversation_context += f"Previous Answer: {msg.content[:200]}...\n"
         
-        # Create classification prompt with memory context
+        # Create classification prompt with conversation context
         classifier_prompt = f"""
-        You are a tennis query classifier for a tennis intelligence system. Analyze this query:
+        You are an intelligent tennis query classifier. Analyze this query and understand what type of response it needs.
         
         QUERY: "{state['user_query']}"
-        {context_info}
+        {conversation_context}
         
-        CONTEXT: This is a tennis-focused system, so assume ambiguous queries about "players", "rankings", 
-        "matches", "tournaments" are tennis-related unless clearly specified otherwise.
+        CONTEXT: This is a tennis intelligence system with access to match data and web search.
+        
+        CLASSIFICATION LOGIC:
+        
+        Think about what the user is really asking for:
+        
+        1. **GENERAL** - Questions about tennis knowledge, techniques, rules, or general guidance:
+           - How to play better, technique questions
+           - Rules, scoring, equipment advice  
+           - Strategy, training, general tennis concepts
+           - These can be answered with tennis expertise alone
+        
+        2. **DATA_SPECIFIC** - Questions that require looking up actual facts, results, or current information:
+           - Specific player performance, rankings, statistics
+           - Tournament results, match outcomes
+           - Current standings, recent events
+           - Head-to-head records, career achievements
+           - These need real data from databases or current web sources
         
         PRONOUN RESOLUTION: 
-        - If the query uses pronouns like "he", "him", "his" and there are recently mentioned MALE players, 
-          substitute with the most relevant male player name.
-        - If the query uses pronouns like "she", "her" and there are recently mentioned FEMALE players,
-          substitute with the most relevant female player name.
-        - GENDER MAPPING: Sinner, Alcaraz, Djokovic, Nadal, Federer, Zverev, Medvedev = MALE
-        - GENDER MAPPING: Sabalenka, Swiatek, Gauff = FEMALE
-        - For "they/them", use context to determine if referring to multiple players or gender-neutral
+        Use conversation context to resolve "he/she/they/him/her" to specific players mentioned earlier.
+        Update the query to be clear and specific.
         
-        Examples:
-        - "How many games did he play?" + Recent: [Sinner, Sabalenka] → "How many games did Sinner play?"
-        - "Who did she beat?" + Recent: [Alcaraz, Swiatek] → "Who did Swiatek beat?"
-        - "What's his ranking?" + Recent: [Sinner, Alcaraz] → "What's Sinner's ranking?" (most recent male)
+        QUERY REFINEMENT:
+        If this is a follow-up question, incorporate necessary context from previous conversation.
+        Make the refined query self-contained and clear.
         
-        Examples of tennis queries:
-        - "Who's the best player right now?" → Tennis-related
-        - "Who won the latest tournament?" → Tennis-related  
-        - "Current rankings" → Tennis-related
-        - "Player stats" → Tennis-related
-        - "What's the weather?" → Not tennis-related
-        
-        Determine if this is tennis-related and refine/clarify the query if needed.
-        Be generous in classifying queries as tennis-related when the context is ambiguous.
-        If pronouns are used and recent players are known, substitute them appropriately based on gender.
+        Think: Does this need factual data lookup, or can it be answered with general tennis knowledge?
         """
         
         messages = [
-            SystemMessage(content="You are a tennis query classifier for a tennis intelligence system. Be generous in classifying ambiguous queries as tennis-related since this is a tennis-focused system."),
+            SystemMessage(content="You are a tennis query classifier. Use conversation context to resolve pronouns and clarify queries."),
             HumanMessage(content=classifier_prompt)
         ]
         
         try:
-            result = classifier_llm.invoke(messages)
+            classification_result = classifier_llm.invoke(messages)
             
-            if result.is_tennis_related:
-                state["refined_query"] = result.refined_query
-                self._debug_print(f"✅ Tennis query confirmed: {state['refined_query']}")
-            else:
-                state["error"] = "Non-tennis query detected"
-                state["final_response"] = "I'm designed for tennis-related questions only."
-                self._debug_print(f"❌ Non-tennis query: {result.reasoning}")
-                
+            if not classification_result.is_tennis_related:
+                state["error"] = f"Query '{state['user_query']}' is not tennis-related"
+                state["refined_query"] = state["user_query"]
+                self._debug_print(f"❌ Non-tennis query detected: {classification_result.reasoning}")
+                return state
+            
+            state["refined_query"] = classification_result.refined_query
+            state["query_type"] = classification_result.query_type
+            self._debug_print(f"✅ Tennis query classified as: {classification_result.query_type}")
+            self._debug_print(f"🔍 Refined: '{classification_result.refined_query}'")
+            if conversation_context:
+                self._debug_print(f"🧠 Used conversation context for refinement")
+            
         except Exception as e:
-            state["refined_query"] = state["user_query"]  # Fallback
-            self._debug_print(f"⚠️ Classification failed ({str(e)}), proceeding with original query")
+            # Fallback: assume tennis-related and data_specific for safety
+            state["refined_query"] = state["user_query"]
+            state["query_type"] = "data_specific"
+            self._debug_print(f"⚠️ Classification fallback used (defaulting to data_specific): {str(e)}")
         
         return state
+    
+    def _should_route_to_tools(self, state: TennisState) -> str:
+        """Determine if query needs tools or can be answered directly."""
+        if state.get("error"):
+            return "general"  # Route errors to synthesizer for handling
+        
+        query_type = state.get("query_type", "data_specific")
+        self._debug_print(f"🚦 Routing decision: {query_type}")
+        
+        return query_type
     
     def _route_query(self, state: TennisState) -> TennisState:
         """Determine routing strategy for the query using structured output."""
@@ -377,27 +319,39 @@ class LangGraphTennisOrchestrator:
         router_llm = self.llm.with_structured_output(RoutingResult)
         
         # Create routing prompt
-        current_year = datetime.now().year
+        current_date = datetime.now()
         routing_prompt = f"""
-        Analyze this tennis query and determine optimal routing:
+        You are a tennis query router. TODAY is {current_date.strftime('%B %d, %Y')}.
         
         QUERY: "{state['refined_query']}"
         ENTITIES: {entities}
-        CURRENT YEAR: {current_year}
         
-        SOURCES:
-        - SQL Database: 2023-{current_year} tennis matches, stats, rankings (historical data)
-        - Web Search: Current rankings, recent news, live updates, latest standings
+        DECISION FRAMEWORK:
         
-        ROUTING GUIDELINES:
-        - Keywords like "current", "latest", "right now", "best player now", "top ranked" → FAVOR SEARCH
-        - Questions about specific historical matches, past tournaments → FAVOR SQL
-        - Player career stats, head-to-head records → FAVOR SQL  
-        - Current form, recent performance, live rankings → FAVOR SEARCH
-        - "Who won X tournament?" (past events) → SQL
-        - "Who's the best/top player?" (current) → SEARCH
+        **WEB SEARCH** - Use when query asks for:
+        ✅ Current/live rankings ("who's #1 now", "best player today", "current rankings")
+        ✅ Recent events ("last tournament", "latest win", "recent match") 
+        ✅ Very recent information or breaking news
+        ✅ Current form, live standings
+        ✅ "What happened recently?", "Who won the latest tournament?"
         
-        Determine which data sources are needed and their priority.
+        **SQL DATABASE** - Use when query asks for:
+        ✅ Specific historical matches (2023-2024, early 2025)
+        ✅ Career statistics, head-to-head records
+        ✅ Tournament history within database range
+        ✅ Statistical analysis, win-loss records
+        
+        **BOTH SOURCES** - Use when query needs:
+        ✅ Comparison of historical vs current performance
+        ✅ Context that spans both time periods
+        
+        EXAMPLES:
+        - "Who's the best player right now?" → WEB SEARCH (current rankings change frequently)
+        - "When did he win his last tournament?" → WEB SEARCH (recent events)
+        - "Head to head record between Nadal and Djokovic" → SQL DATABASE (historical stats)
+        - "Who won Wimbledon 2024?" → SQL DATABASE (specific historical event)
+        
+        RULE: If in doubt about recency or currency, choose WEB SEARCH.
         """
         
         messages = [
@@ -418,26 +372,14 @@ class LangGraphTennisOrchestrator:
             self._debug_print(f"🎯 Routing: {state['routing_decision']}")
             
         except Exception as e:
-            # Intelligent default routing based on query keywords
-            query_lower = state['refined_query'].lower()
-            current_keywords = ['current', 'latest', 'right now', 'now', 'best player', 'top player', 'ranking', 'ranked']
-            
-            if any(keyword in query_lower for keyword in current_keywords):
-                state["routing_decision"] = {
-                    "sql_needed": False,
-                    "search_needed": True,
-                    "reasoning": f"Default search routing for current info query (structured output failed: {str(e)})",
-                    "priority": "search_first"
-                }
-                self._debug_print("🔍 Defaulting to search for current info query")
-            else:
-                state["routing_decision"] = {
-                    "sql_needed": True,
-                    "search_needed": False,
-                    "reasoning": f"Default SQL routing for historical query (structured output failed: {str(e)})",
-                    "priority": "sql_first"
-                }
-                self._debug_print("🗄️ Defaulting to SQL for historical query")
+            # Simple fallback: default to search for safety when structured output fails
+            state["routing_decision"] = {
+                "sql_needed": False,
+                "search_needed": True,
+                "reasoning": f"Fallback to search routing (structured output failed: {str(e)})",
+                "priority": "search_first"
+            }
+            self._debug_print("🔍 Fallback: Defaulting to search when routing analysis fails")
         
         return state
     
@@ -447,31 +389,61 @@ class LangGraphTennisOrchestrator:
             return state
             
         self._debug_print("🗄️ SQL Agent executing...")
+        self._update_status("querying SQL database...")
         
-        # Simple and direct: just call the SQL database query tool
-        sql_prompt = f"""
-        Answer this tennis query using the SQL database query tool.
+        # Create a conversation with tool calling support
+        conversation_messages = []
         
-        QUERY: "{state['refined_query']}"
+        # Add system message
+        conversation_messages.append(
+            SystemMessage(content="You are a tennis SQL agent. Use the query_sql_database tool to answer tennis questions.")
+        )
         
-        Call query_sql_database with the user query to get a complete answer from the tennis database.
-        """
+        # Add the user query
+        conversation_messages.append(
+            HumanMessage(content=f"Answer this tennis query using the SQL database: {state['refined_query']}")
+        )
         
-        messages = [
-            SystemMessage(content="You are a tennis SQL agent. Use the query_sql_database tool to answer tennis questions."),
-            HumanMessage(content=sql_prompt)
-        ]
-        
-        # This will trigger tool calling
-        response = self.llm_with_tools.invoke(messages)
-        state["messages"].append(response)
-        
-        # Debug: Print tool calls that were made
-        if hasattr(response, 'tool_calls') and response.tool_calls:
+        # Keep calling LLM until it stops making tool calls
+        max_iterations = 3
+        for iteration in range(max_iterations):
+            # Get LLM response (may include tool calls)
+            response = self.llm_with_tools.invoke(conversation_messages)
+            conversation_messages.append(response)
+            state["messages"].append(response)
+            
+            # If no tool calls, we're done
+            if not hasattr(response, 'tool_calls') or not response.tool_calls:
+                break
+                
+            # Debug: Print tool calls that were made
             self._debug_print(f"🔧 SQL Agent called {len(response.tool_calls)} tools:")
             for tool_call in response.tool_calls:
                 tool_name = tool_call.get('name', 'unknown')
                 self._debug_print(f"   📞 Calling: {tool_name}")
+            
+            # Execute all tool calls at once (ToolNode processes all tool calls together)
+            try:
+                # Execute all tools from this response at once
+                tool_result = self.tool_node.invoke({"messages": [response]})
+                
+                # Add all tool messages to conversation
+                if tool_result and "messages" in tool_result:
+                    for tool_message in tool_result["messages"]:
+                        conversation_messages.append(tool_message)
+                        state["messages"].append(tool_message)
+                        
+            except Exception as e:
+                self._debug_print(f"❌ Tool execution failed: {e}")
+                # Create error tool messages for each tool call
+                from langchain_core.messages import ToolMessage
+                for tool_call in response.tool_calls:
+                    error_message = ToolMessage(
+                        content=f"Tool execution failed: {str(e)}",
+                        tool_call_id=tool_call["id"]
+                    )
+                    conversation_messages.append(error_message)
+                    state["messages"].append(error_message)
         
         return state
     
@@ -481,42 +453,79 @@ class LangGraphTennisOrchestrator:
             return state
             
         self._debug_print("🌐 Search Agent executing...")
+        self._update_status("searching online...")
         
-        # Prepare message for LLM with tool calling
-        search_prompt = f"""
-        You need to answer this tennis query using online search:
+        # Create a conversation with tool calling support
+        conversation_messages = []
         
-        QUERY: "{state['refined_query']}"
+        # Add system message
+        conversation_messages.append(
+            SystemMessage(content="You are a tennis search agent. Use the online_search tool to get current tennis information.")
+        )
         
-        Call the online_search tool to get current tennis information from the web.
-        """
+        # Add the user query
+        conversation_messages.append(
+            HumanMessage(content=f"Answer this tennis query using online search: {state['refined_query']}")
+        )
         
-        messages = [
-            SystemMessage(content="You are a tennis search agent. Use the online_search tool to get current tennis information."),
-            HumanMessage(content=search_prompt)
-        ]
-        
-        # This will trigger tool calling if the LLM decides to call tools
-        response = self.llm_with_tools.invoke(messages)
-        state["messages"].append(response)
-        
-        # Debug: Print tool calls that were made
-        if hasattr(response, 'tool_calls') and response.tool_calls:
+        # Keep calling LLM until it stops making tool calls
+        max_iterations = 3
+        for iteration in range(max_iterations):
+            # Get LLM response (may include tool calls)
+            response = self.llm_with_tools.invoke(conversation_messages)
+            conversation_messages.append(response)
+            state["messages"].append(response)
+            
+            # If no tool calls, we're done
+            if not hasattr(response, 'tool_calls') or not response.tool_calls:
+                break
+                
+            # Debug: Print tool calls that were made
             self._debug_print(f"🔧 Search Agent called {len(response.tool_calls)} tools:")
             for tool_call in response.tool_calls:
                 tool_name = tool_call.get('name', 'unknown')
                 self._debug_print(f"   📞 Calling: {tool_name}")
+            
+            # Execute all tool calls at once (ToolNode processes all tool calls together)
+            try:
+                # Execute all tools from this response at once
+                tool_result = self.tool_node.invoke({"messages": [response]})
+                
+                # Add all tool messages to conversation
+                if tool_result and "messages" in tool_result:
+                    for tool_message in tool_result["messages"]:
+                        conversation_messages.append(tool_message)
+                        state["messages"].append(tool_message)
+                        
+            except Exception as e:
+                self._debug_print(f"❌ Tool execution failed: {e}")
+                # Create error tool messages for each tool call
+                from langchain_core.messages import ToolMessage
+                for tool_call in response.tool_calls:
+                    error_message = ToolMessage(
+                        content=f"Tool execution failed: {str(e)}",
+                        tool_call_id=tool_call["id"]
+                    )
+                    conversation_messages.append(error_message)
+                    state["messages"].append(error_message)
         
         return state
     
     def _synthesize_response(self, state: TennisState) -> TennisState:
-        """Synthesize final response from collected data."""
+        """Synthesize final response from collected data or general knowledge."""
         if state.get("error"):
             return state
             
         self._debug_print("🧮 Synthesizing final response...")
+        self._update_status("preparing final answer...")
         
-        # Debug: Print tool results for debugging
+        query_type = state.get("query_type", "data_specific")
+        
+        # Handle general queries that don't need tools
+        if query_type == "general":
+            return self._synthesize_general_response(state)
+        
+        # Handle data-specific queries with tool results
         self._debug_print_tool_results(state)
         
         # Collect all information from the conversation
@@ -533,7 +542,7 @@ class LangGraphTennisOrchestrator:
                     elif 'online_search' in tool_call.get('name', ''):
                         sources.append("Web Search")
         
-        # Create synthesis prompt
+        # Create synthesis prompt with conversation history for context
         synthesis_prompt = f"""
         Create a comprehensive tennis response for this query:
         
@@ -545,35 +554,118 @@ class LangGraphTennisOrchestrator:
         SOURCES USED: {list(set(sources))}
         
         Provide a clear, factual response that directly answers the query.
-        Keep it concise but informative.
+        
+        LENGTH: Keep your response to 100 words or less. Be concise and focused.
+        
+        Use the conversation context naturally - LangGraph will handle memory automatically.
         """
         
-        messages = [
-            SystemMessage(content=f"You are a tennis expert. Today is {datetime.now().strftime('%Y-%m-%d')}."),
-            HumanMessage(content=synthesis_prompt)
-        ]
+        # Include conversation context in the messages for natural memory handling
+        synthesis_messages = []
         
-        response = self.llm.invoke(messages)
+        # Add system message
+        synthesis_messages.append(
+            SystemMessage(content=f"You are a tennis expert. Today is {datetime.now().strftime('%Y-%m-%d')}.")
+        )
+        
+        # Add recent conversation context for natural memory, but be careful with tool calls
+        if state.get("messages"):
+            # Include last few exchanges but handle tool calls properly
+            recent_messages = state["messages"][-10:]  # Get more messages for context
+            
+            # Filter and organize messages to ensure proper tool call sequences
+            filtered_messages = []
+            i = 0
+            while i < len(recent_messages):
+                msg = recent_messages[i]
+                
+                if isinstance(msg, HumanMessage):
+                    # Always include human messages
+                    filtered_messages.append(msg)
+                    i += 1
+                elif isinstance(msg, AIMessage):
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        # This AI message has tool calls - include it with all its tool responses
+                        filtered_messages.append(msg)
+                        i += 1
+                        
+                        # Find and include all corresponding tool messages
+                        while i < len(recent_messages) and isinstance(recent_messages[i], ToolMessage):
+                            filtered_messages.append(recent_messages[i])
+                            i += 1
+                    else:
+                        # Regular AI message without tool calls
+                        filtered_messages.append(msg)
+                        i += 1
+                else:
+                    # Skip standalone tool messages or other message types
+                    i += 1
+            
+            # Add the filtered messages, keeping only the most recent ones
+            synthesis_messages.extend(filtered_messages[-6:])  # Last 6 filtered messages
+        
+        # Add the synthesis prompt
+        synthesis_messages.append(HumanMessage(content=synthesis_prompt))
+        
+        response = self.llm.invoke(synthesis_messages)
         
         state["final_response"] = response.content
         state["sources"] = list(set(sources)) if sources else ["System"]
         state["confidence"] = 0.8 if sources else 0.5
         
-        # Extract players mentioned in the final response and update session memory
-        players_mentioned = self._extract_players_from_response(response.content)
-        session_id = state.get("session_id", "default")
+        # Add the response to messages for LangGraph's natural memory handling
+        state["messages"].append(response)
         
-        # Update session memory with this conversation
-        self._update_session_memory(
-            session_id=session_id,
-            user_query=state["user_query"],
-            response=response.content,
-            players_mentioned=players_mentioned
-        )
+        self._debug_print(f"✅ Response synthesized using LangGraph's built-in memory")
         
-        if players_mentioned:
-            self._debug_print(f"🧠 Updated session memory with players: {players_mentioned}")
+        return state
+    
+    def _synthesize_general_response(self, state: TennisState) -> TennisState:
+        """Synthesize response for general tennis questions using LLM knowledge."""
+        self._debug_print("🎓 Answering general tennis question with knowledge base")
         
+        # Create prompt for general tennis knowledge
+        general_prompt = f"""
+        Answer this tennis question using your general tennis knowledge:
+        
+        QUERY: "{state['refined_query']}"
+        
+        You are a tennis expert. Provide a clear, informative, and helpful response.
+        Include practical tips, explanations, or guidance as appropriate.
+        
+        LENGTH: Keep your response to 100 words or less. Be concise and focused.
+        
+        Since this is a general tennis question, you don't need to cite specific recent data or statistics.
+        Focus on providing accurate tennis knowledge, techniques, rules, or general guidance.
+        """
+        
+        # Create messages for LLM
+        general_messages = [
+            SystemMessage(content="You are a knowledgeable tennis expert providing helpful guidance on tennis techniques, rules, and general knowledge."),
+            HumanMessage(content=general_prompt)
+        ]
+        
+        try:
+            response = self.llm.invoke(general_messages)
+            
+            # Store the response
+            state["final_response"] = response.content
+            state["sources"] = ["Tennis Knowledge Base"]
+            state["confidence"] = 0.9  # High confidence for general knowledge
+            
+            # Add the response to messages for LangGraph's memory handling
+            state["messages"].append(response)
+            
+            self._debug_print(f"✅ General tennis response synthesized")
+            
+        except Exception as e:
+            error_msg = f"Failed to generate general tennis response: {str(e)}"
+            state["final_response"] = error_msg
+            state["sources"] = ["System"]
+            state["confidence"] = 0.0
+            state["error"] = error_msg
+            self._debug_print(f"❌ {error_msg}")
+            
         return state
     
     def _debug_print_tool_results(self, state: TennisState) -> None:
@@ -681,12 +773,6 @@ class LangGraphTennisOrchestrator:
     
     def _sql_next_step(self, state: TennisState) -> str:
         """Determine next step after SQL agent."""
-        last_message = state["messages"][-1] if state["messages"] else None
-        
-        # If SQL agent decided to call tools, go to tools
-        if last_message and hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            return "tools"
-        
         # Check if we need search too based on routing
         routing = state.get("routing_decision", {})
         if routing.get("search_needed", False):
@@ -695,59 +781,22 @@ class LangGraphTennisOrchestrator:
         # Otherwise go straight to synthesis
         return "synthesizer"
     
-    def _search_next_step(self, state: TennisState) -> str:
-        """Determine next step after search agent."""
-        last_message = state["messages"][-1] if state["messages"] else None
-        
-        if last_message and hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            return "tools"
-        
-        return "synthesizer"
-    
-    def _tools_next_step(self, state: TennisState) -> str:
-        """Determine next step after tools execution."""
-        # After tools are executed, check which agents have run by looking at messages
-        routing = state.get("routing_decision", {})
-        sql_needed = routing.get("sql_needed", False)
-        search_needed = routing.get("search_needed", False)
-        
-        # Check which agents have already executed by looking at the messages
-        sql_agent_ran = False
-        search_agent_ran = False
-        
-        for message in state["messages"]:
-            if hasattr(message, 'content') and message.content:
-                content = str(message.content).lower()
-                if "sql agent" in content or "database" in content:
-                    sql_agent_ran = True
-                elif "search agent" in content or "web search" in content:
-                    search_agent_ran = True
-        
-        # If both SQL and search are needed, and only one has run, continue to the other
-        if sql_needed and search_needed:
-            if sql_agent_ran and not search_agent_ran:
-                return "search_agent"
-            elif search_agent_ran and not sql_agent_ran:
-                return "sql_agent"
-        
-        # Otherwise, go to synthesis (tools have executed, we're done)
-        return "synthesizer"
-    
     def process_query(self, user_query: str, session_id: str) -> Dict[str, Any]:
         """Process a tennis query through the LangGraph workflow."""
         start_time = time.time()
         
-        # Start loading animation
-        self._start_loading_animation()
+        # Start status indicator
+        self._start_status_indicator("thinking...")
         
         try:
             self._debug_print(f"\n🚀 LangGraph Processing: '{user_query}'")
             
-            # Initialize state
+            # Initialize state with user query as a message for LangGraph memory
             initial_state = TennisState(
-                messages=[],
+                messages=[HumanMessage(content=user_query)],
                 user_query=user_query,
                 refined_query="",
+                query_type="data_specific",  # Default value, will be set by classifier
                 routing_decision={},
                 sql_results=None,
                 search_results=None,
@@ -755,9 +804,7 @@ class LangGraphTennisOrchestrator:
                 confidence=0.0,
                 sources=[],
                 error=None,
-                session_id=session_id,
-                mentioned_players=[],
-                conversation_context=None
+                session_id=session_id
             )
             
             # Run the workflow
@@ -769,9 +816,12 @@ class LangGraphTennisOrchestrator:
             sources = final_state.get("sources", ["System"])
             error = final_state.get("error")
             
+            # Extract SQL query from tool results for Text2SQL evaluation
+            sql_query = self._extract_sql_query_from_messages(final_state.get("messages", []))
+            
             processing_time = time.time() - start_time
             
-            return {
+            result = {
                 'response': response,
                 'confidence': confidence,
                 'sources': sources,
@@ -781,6 +831,13 @@ class LangGraphTennisOrchestrator:
                 'langgraph_used': True,
                 'processing_time': processing_time
             }
+            
+            # Add SQL query if found (for Text2SQL evaluation)
+            if sql_query:
+                result['sql_query'] = sql_query
+                self._debug_print(f"🔍 Extracted SQL for evaluation: {sql_query}")
+            
+            return result
             
         except Exception as e:
             error_msg = f"LangGraph workflow error: {str(e)}"
@@ -794,5 +851,44 @@ class LangGraphTennisOrchestrator:
                 'processing_time': time.time() - start_time
             }
         finally:
-            # Stop loading animation
-            self._stop_loading_animation() 
+            # Stop status indicator
+            self._stop_status_indicator()
+    
+    def _extract_sql_query_from_messages(self, messages: List[BaseMessage]) -> Optional[str]:
+        """Extract the SQL query from tool messages for Text2SQL evaluation."""
+        try:
+            for message in messages:
+                if hasattr(message, 'content') and message.content:
+                    content = str(message.content)
+                    
+                    # Look for SQL database tool results
+                    if 'generated_sql' in content.lower() or 'query_sql_database' in content.lower():
+                        try:
+                            import json
+                            result = json.loads(content)
+                            
+                            # Extract SQL query from different possible locations
+                            if result.get('generated_sql'):
+                                return result['generated_sql']
+                            elif result.get('sql_query'):
+                                return result['sql_query']
+                                
+                        except json.JSONDecodeError:
+                            # Try to extract SQL with regex if JSON parsing fails
+                            import re
+                            sql_pattern = r'Generated SQL:\s*(.+?)(?:\n|$|,)'
+                            match = re.search(sql_pattern, content, re.IGNORECASE)
+                            if match:
+                                return match.group(1).strip()
+                            
+                            # Try another pattern
+                            sql_pattern = r'"generated_sql":\s*"([^"]+)"'
+                            match = re.search(sql_pattern, content, re.IGNORECASE)
+                            if match:
+                                return match.group(1).strip()
+            
+            return None
+            
+        except Exception as e:
+            self._debug_print(f"❌ Error extracting SQL query: {e}")
+            return None 

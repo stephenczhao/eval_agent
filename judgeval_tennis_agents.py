@@ -1,21 +1,25 @@
 """
-Tennis Intelligence System - Judgeval Evaluation Implementation
-=============================================================
+Tennis Intelligence System Evaluation with JudgeVal
+==================================================
 
-This script implements comprehensive evaluation of the tennis intelligence system
-using judgeval scorers to assess answer quality, relevancy, faithfulness, and correctness.
+This module integrates JudgeVal evaluation capabilities with the tennis intelligence system
+to provide comprehensive performance monitoring and evaluation.
 
-Updated to use the new LangGraph-based tennis agents system with proper tool calling,
-memory management, and workflow orchestration.
+Features:
+- Automated evaluation of tennis system responses
+- Multiple evaluation metrics (faithfulness, relevancy, hallucination detection, etc.)
+- Test case generation for various tennis query types
+- Performance benchmarking and reporting
 """
 
 import os
 import sys
-import time
 import json
+import time
 from datetime import datetime
-from typing import Dict, Any, List
 from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass
 
 # Add src directory to Python path for proper imports
 current_dir = Path(__file__).parent
@@ -25,760 +29,712 @@ sys.path.insert(0, str(src_dir))
 # Change directory to project root for relative file paths
 os.chdir(current_dir)
 
-# Import judgeval components
-from judgeval import JudgmentClient
-from judgeval.data import Example
-from judgeval.scorers import (
-    FaithfulnessScorer,
-    AnswerRelevancyScorer, 
-    AnswerCorrectnessScorer,
-    HallucinationScorer,
-    InstructionAdherenceScorer,
-    GroundednessScorer,
-    ToolOrderScorer,
-    ToolDependencyScorer
-)
-
-# Import the new LangGraph-based tennis system
 try:
+    from judgeval import JudgmentClient
+    from judgeval.data import Example
+    from judgeval.scorers import (
+        FaithfulnessScorer,
+        AnswerRelevancyScorer,
+        AnswerCorrectnessScorer,
+        InstructionAdherenceScorer,
+        ToolOrderScorer,
+        ToolDependencyScorer,
+        Text2SQLScorer,
+        ClassifierScorer,
+    )
     from tennis_agents import TennisIntelligenceSystem, create_session_id
+    from config.settings import TennisConfig
 except ImportError as e:
     print(f"❌ Import Error: {e}")
-    print("Please ensure you're running from the eval_agent directory")
-    print("and that tennis_agents.py contains the LangGraph-based system")
+    print("Please ensure you have:")
+    print("  - JudgeVal library installed: pip install judgeval")
+    print("  - Required environment variables set (JUDGMENT_API_KEY, JUDGMENT_ORG_ID)")
+    print("  - Running from the eval_agent directory")
     sys.exit(1)
 
 
-class TennisAgentsEvaluator:
+@dataclass
+class TennisEvaluationResult:
+    """Container for tennis system evaluation results."""
+    query: str
+    response: str
+    confidence: float
+    sources: List[str]
+    tools_called: List[str]
+    processing_time: float
+    evaluation_scores: Dict[str, Any]
+    success: bool
+    errors: List[str]
+
+
+class TennisEvaluationSuite:
     """
-    Comprehensive evaluator for the Tennis Intelligence System using judgeval.
+    Comprehensive evaluation suite for the Tennis Intelligence System using JudgeVal.
     
-    Now uses the LangGraph-based tennis system with:
-    - Official tool calling through LangGraph workflows
-    - Session-based memory management with pronoun resolution
-    - Proper tool execution tracking and metadata
-    - Clean loading animations and debug modes
-    
-    Tests various aspects of the system:
-    - Answer relevancy to tennis queries
-    - Faithfulness to retrieved data
-    - Answer correctness
-    - Hallucination detection
-    - Instruction adherence
-    - Groundedness in sources
-    - Tool usage patterns and dependencies
+    This class provides structured evaluation of the tennis system across multiple
+    dimensions including faithfulness, relevancy, hallucination detection, and tool usage.
     """
     
-    def __init__(self, debug: bool = False):
-        """Initialize the evaluator with LangGraph tennis system and judgeval client."""
-        print("🎾 Initializing Tennis Agents Evaluator with LangGraph System...")
+    def __init__(self, 
+                 project_name: str = "tennis_intelligence_eval",
+                 debug: bool = False):
+        """
+        Initialize the tennis evaluation suite.
         
-        # Initialize tennis intelligence system with LangGraph orchestrator
-        # Debug mode disabled for evaluation to get clean outputs
-        self.tennis_system = TennisIntelligenceSystem(debug=debug)
+        Args:
+            project_name: JudgeVal project name for organizing evaluations
+            debug: Enable debug mode for detailed logging
+        """
         self.debug = debug
+        self.project_name = project_name
         
-        # Initialize judgeval client
-        self.judgment_client = JudgmentClient()
+        # Initialize tennis system
+        self.tennis_system = TennisIntelligenceSystem(debug=debug)
+        self.session_id = create_session_id()
         
-        # Initialize scorers with appropriate thresholds
+        # Initialize JudgeVal client
+        try:
+            self.judgment_client = JudgmentClient()
+            if debug:
+                print("✅ JudgeVal client initialized successfully")
+        except Exception as e:
+            print(f"❌ Failed to initialize JudgeVal client: {e}")
+            print("Please check your JUDGMENT_API_KEY and JUDGMENT_ORG_ID environment variables")
+            raise
+        
+        # Define evaluation scorers with appropriate thresholds
         self.scorers = [
-            AnswerRelevancyScorer(threshold=0.7),      # Is answer relevant to tennis query?
-            FaithfulnessScorer(threshold=0.8),         # Is answer faithful to retrieved data?
-            AnswerCorrectnessScorer(threshold=0.7),    # Is the answer factually correct?
-            HallucinationScorer(threshold=0.3),        # Low threshold - we want to catch hallucinations
-            InstructionAdherenceScorer(threshold=0.8), # Does it follow tennis-specific instructions?
-            GroundednessScorer(threshold=0.7),          # Is answer grounded in provided sources?
-            ToolOrderScorer(threshold=0.8),           # Are tools called in the correct order?
-            ToolDependencyScorer(threshold=0.8)       # Are tools dependent on each other?
+            FaithfulnessScorer(threshold=0.7),          # High threshold for factual accuracy
+            AnswerRelevancyScorer(threshold=0.8),       # High threshold for relevance
+            InstructionAdherenceScorer(threshold=0.7),   # Check if instructions are followed
+            ToolOrderScorer(threshold=0.8),             # Evaluate tool usage order
+            ToolDependencyScorer(threshold=0.8),        # Check tool dependencies
+            Text2SQLScorer,                             # Evaluate SQL query correctness (for database queries)
         ]
         
-        print("✅ Tennis Agents Evaluator initialized successfully")
-        print(f"📊 Configured {len(self.scorers)} evaluation scorers")
-        print("🚀 Using LangGraph system with official tool calling and memory management")
-        if debug:
-            print("🐛 Debug mode enabled for detailed evaluation output")
-    
-    def create_test_examples(self) -> List[Example]:
-        """
-        Create comprehensive test examples covering different tennis query types.
-        
-        Now includes tests for:
-        - Memory-based queries (pronoun resolution)
-        - Current vs historical data routing
-        - Tool calling sequences
-        - Multi-turn conversations
-        
-        Returns:
-            List of Example objects for evaluation
-        """
-        test_queries = [
-            {
-                "input": "Who won the most Grand Slam titles in men's tennis?",
-                "description": "Statistical query about historical tennis records",
-                "expected_topics": ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Grand Slam"],
-                "context_type": "historical_stats",
-                "expected_tools": ["query_sql_database"],
-                "expected_routing": "sql_first"
-            },
-            {
-                "input": "What is Novak Djokovic's head-to-head record against Rafael Nadal?", 
-                "description": "Head-to-head statistical query",
-                "expected_topics": ["Djokovic", "Nadal", "head-to-head", "wins", "losses"],
-                "context_type": "player_comparison",
-                "expected_tools": ["query_sql_database"],
-                "expected_routing": "sql_first"
-            },
-            {
-                "input": "Who is the current world number 1 in men's tennis?",
-                "description": "Current ranking query requiring recent information",
-                "expected_topics": ["ranking", "ATP", "number 1", "current"],
-                "context_type": "current_rankings",
-                "expected_tools": ["online_search"],
-                "expected_routing": "search_first"
-            },
-            {
-                "input": "What surface does Rafael Nadal perform best on?",
-                "description": "Surface performance analysis",
-                "expected_topics": ["Nadal", "clay", "surface", "French Open", "performance"],
-                "context_type": "surface_analysis",
-                "expected_tools": ["query_sql_database"],
-                "expected_routing": "sql_first"
-            },
-            {
-                "input": "Which tennis players have won all four Grand Slams?",
-                "description": "Achievement-based query about Career Grand Slam",
-                "expected_topics": ["Career Grand Slam", "Wimbledon", "US Open", "French Open", "Australian Open"],
-                "context_type": "achievement_query",
-                "expected_tools": ["query_sql_database"],
-                "expected_routing": "sql_first"
-            },
-            {
-                "input": "What are the major tennis tournaments?",
-                "description": "General tennis knowledge query",
-                "expected_topics": ["Grand Slam", "ATP Masters", "tournaments", "Wimbledon", "US Open"],
-                "context_type": "general_knowledge",
-                "expected_tools": ["online_search"],
-                "expected_routing": "search_first"
-            },
-            {
-                "input": "How many sets are played in a men's Grand Slam match?",
-                "description": "Tennis rules and format query",
-                "expected_topics": ["best of five", "sets", "Grand Slam", "men's"],
-                "context_type": "rules_format",
-                "expected_tools": ["online_search"],
-                "expected_routing": "search_first"
-            },
-            {
-                "input": "Who has the fastest serve in tennis history?",
-                "description": "Tennis record query about serve speed",
-                "expected_topics": ["serve speed", "fastest", "mph", "km/h", "record"],
-                "context_type": "performance_records",
-                "expected_tools": ["online_search"],
-                "expected_routing": "search_first"
-            },
-            # New memory-based queries to test LangGraph session management
-            {
-                "input": "Who is the best player right now?",
-                "description": "Initial query to establish context for follow-up",
-                "expected_topics": ["ranking", "ATP", "WTA", "current", "best"],
-                "context_type": "current_rankings",
-                "expected_tools": ["online_search"],
-                "expected_routing": "search_first",
-                "is_context_setter": True
-            },
-            {
-                "input": "How many games did he play in 2025?",
-                "description": "Memory-dependent query testing pronoun resolution",
-                "expected_topics": ["games", "matches", "2025", "statistics"],
-                "context_type": "memory_dependent",
-                "expected_tools": ["query_sql_database"],
-                "expected_routing": "sql_first",
-                "requires_context": True
-            }
-        ]
-        
-        examples = []
-        session_id = create_session_id()
-        
-        print("🔄 Generating tennis system responses for evaluation...")
-        print(f"📋 Session ID: {session_id}")
-        
-        for i, test_case in enumerate(test_queries):
-            print(f"Processing query {i+1}/{len(test_queries)}: {test_case['input']}")
-            
-            # Get response from tennis system using LangGraph orchestrator
-            start_time = time.time()
-            result = self.tennis_system.process_query(test_case["input"], session_id)
-            processing_time = time.time() - start_time
-            
-            # Extract key information from the LangGraph result
-            actual_output = result.get('response', '')
-            sources = result.get('sources', [])
-            confidence = result.get('confidence', 0.0)
-            sql_data_used = result.get('sql_data_used', False)
-            search_data_used = result.get('search_data_used', False)
-            tools_called_actual = result.get('tools_called', [])
-            langgraph_used = result.get('langgraph_used', False)
-            processing_time_actual = result.get('processing_time', processing_time)
-            
-            # Map LangGraph tools to expected judgeval tool names
-            tools_called = []
-            if sql_data_used:
-                tools_called.append('query_sql_database')
-            if search_data_used:
-                tools_called.append('online_search')
-            
-            # Get expected tools from test case
-            expected_tools = test_case.get("expected_tools", [])
-            
-            # Create retrieval context from sources and metadata
-            retrieval_context = []
-            
-            # Add source information
-            if sources:
-                retrieval_context.append(f"Information sources: {', '.join(sources)}")
-            
-            # Add confidence information
-            retrieval_context.append(f"System confidence: {confidence:.2f}")
-            
-            # Add processing metadata
-            if sql_data_used:
-                retrieval_context.append("Used tennis database for historical/statistical data")
-            if search_data_used:
-                retrieval_context.append("Used web search for current information")
-            
-            # Add LangGraph-specific information
-            if langgraph_used:
-                retrieval_context.append("Processed using LangGraph workflow with official tool calling")
-                retrieval_context.append("Session-based memory management with pronoun resolution")
-            
-            # Add expected topics for evaluation context
-            retrieval_context.append(f"Expected topics: {', '.join(test_case['expected_topics'])}")
-            retrieval_context.append(f"Query type: {test_case['context_type']}")
-            retrieval_context.append(f"Expected routing: {test_case.get('expected_routing', 'adaptive')}")
-            
-            # Add tool usage information
-            if tools_called:
-                retrieval_context.append(f"Tools executed: {', '.join(tools_called)}")
-            if expected_tools:
-                retrieval_context.append(f"Expected tools: {', '.join(expected_tools)}")
-            
-            # Memory context information
-            if test_case.get('requires_context'):
-                retrieval_context.append("Query requires context from previous conversation")
-            if test_case.get('is_context_setter'):
-                retrieval_context.append("Query establishes context for future queries")
-            
-            # Create context field for hallucination scorer (required parameter)
-            context_for_hallucination = retrieval_context.copy()
-            
-            # Create expected output based on query type and topics
-            expected_output = self._generate_expected_output(test_case)
-            
-            # Create Example for judgeval
-            example = Example(
-                input=test_case["input"],
-                actual_output=actual_output,
-                expected_output=expected_output,
-                context=context_for_hallucination,  # Required for HallucinationScorer
-                retrieval_context=retrieval_context,
-                tools_called=tools_called if tools_called else None,
-                expected_tools=expected_tools if expected_tools else None,
-                additional_metadata={
-                    "description": test_case["description"],
-                    "context_type": test_case["context_type"],
-                    "processing_time": processing_time_actual,
-                    "system_confidence": confidence,
-                    "sources_used": sources,
-                    "sql_data_used": sql_data_used,
-                    "search_data_used": search_data_used,
-                    "tools_actually_called": tools_called,
-                    "tools_expected": expected_tools,
-                    "langgraph_used": langgraph_used,
-                    "expected_routing": test_case.get("expected_routing", "adaptive"),
-                    "requires_context": test_case.get("requires_context", False),
-                    "is_context_setter": test_case.get("is_context_setter", False),
-                    "session_id": session_id
+        # Add custom tennis expertise classifier
+        self.tennis_expertise_scorer = ClassifierScorer(
+            name="Tennis Expertise",
+            slug="tennis-expertise-eval",
+            threshold=0.7,
+            conversation=[
+                {
+                    "role": "system", 
+                    "content": """You are evaluating whether a tennis-related response demonstrates good tennis knowledge and expertise. 
+
+Consider:
+- Accuracy of tennis facts, rules, and statistics
+- Proper use of tennis terminology
+- Contextual understanding of tennis history and current events
+- Quality of insights and analysis
+
+Question: {{input}}
+Response: {{actual_output}}
+
+Does this response demonstrate good tennis expertise? Answer Y for yes, N for no."""
                 }
-            )
-            
-            examples.append(example)
-            print(f"  ✅ Generated example with {len(retrieval_context)} context items")
-            
-            # Add small delay for memory-dependent queries
-            if test_case.get('requires_context'):
-                time.sleep(0.5)  # Allow session memory to be properly maintained
+            ],
+            options={"Y": 1.0, "N": 0.0}
+        )
         
-        print(f"🎯 Created {len(examples)} test examples for evaluation")
-        print(f"🧠 Memory-dependent queries: {sum(1 for ex in examples if ex.additional_metadata.get('requires_context'))}")
-        print(f"📊 Context-setting queries: {sum(1 for ex in examples if ex.additional_metadata.get('is_context_setter'))}")
-        return examples
+        # Add tennis expertise scorer to the list
+        self.scorers.append(self.tennis_expertise_scorer)
+        
+        if debug:
+            print(f"🎾 Tennis Evaluation Suite initialized")
+            print(f"📊 Project: {project_name}")
+            print(f"🔍 Scorers: {[scorer.__class__.__name__ for scorer in self.scorers]}")
     
-    def _generate_expected_output(self, test_case: Dict[str, Any]) -> str:
+    def create_tennis_test_cases(self) -> List[Dict[str, Any]]:
         """
-        Generate expected output for comparison based on query type.
+        Create comprehensive test cases for tennis system evaluation.
+        
+        Returns:
+            List of test case dictionaries with queries and expected characteristics
+        """
+        test_cases = [
+            # Recent data queries (should use online search)
+            {
+                "query": "What are the current ATP rankings as of today?",
+                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+                "category": "current_data",
+                "expected_characteristics": {
+                    "should_mention_recency": True,
+                    "should_use_search": True,
+                    "temporal_scope": "current"
+                }
+            },
+            {
+                "query": "Who won the latest Grand Slam tournament?",
+                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+                "category": "recent_events",
+                "expected_characteristics": {
+                    "should_mention_recency": True,
+                    "should_use_search": True
+                }
+            },
+            
+            # Historical data queries (should use SQL database)
+            {
+                "query": "Who won the French Open in 2023?",
+                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+                "category": "historical_data",
+                "expected_characteristics": {
+                    "should_use_database": True,
+                    "temporal_scope": "2023"
+                }
+            },
+            {
+                "query": "Show me Novak Djokovic's performance in 2024",
+                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+                "category": "player_analysis",
+                "expected_characteristics": {
+                    "should_use_database": True,
+                    "should_include_stats": True
+                }
+            },
+            {
+                "query": "Compare Rafael Nadal and Roger Federer's head-to-head record from 2023-2024",
+                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+                "category": "comparison_analysis",
+                "expected_characteristics": {
+                    "should_use_database": True,
+                    "should_compare_players": True
+                }
+            },
+            
+            # Edge cases and temporal boundary queries
+            {
+                "query": "What happened in tennis in 2022?",
+                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+                "category": "pre_database_era",
+                "expected_characteristics": {
+                    "should_use_search": True,
+                    "temporal_scope": "pre_database"
+                }
+            },
+            {
+                "query": "Tennis predictions for 2026",
+                "expected_tools": [{"tool_name": "online_search", "parameters": None}], 
+                "category": "future_queries",
+                "expected_characteristics": {
+                    "should_use_search": True,
+                    "temporal_scope": "future"
+                }
+            },
+            
+            # Mixed temporal queries
+            {
+                "query": "How has Serena Williams' ranking changed over the years?",
+                "expected_tools": [
+                    {"tool_name": "query_sql_database", "parameters": None},
+                    {"tool_name": "online_search", "parameters": None}
+                ],
+                "category": "long_term_analysis",
+                "expected_characteristics": {
+                    "should_use_both_sources": True,
+                    "should_mention_career_span": True
+                }
+            },
+            
+            # Technical tennis queries
+            {
+                "query": "Explain the differences between clay, grass, and hard court surfaces in tennis",
+                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+                "category": "technical_knowledge",
+                "expected_characteristics": {
+                    "should_be_educational": True,
+                    "should_explain_differences": True
+                }
+            },
+            
+            # Specific statistical queries
+            {
+                "query": "What was the average match duration in ATP tournaments in 2024?",
+                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+                "category": "statistical_analysis",
+                "expected_characteristics": {
+                    "should_use_database": True,
+                    "should_include_numbers": True
+                }
+            },
+        ]
+        
+        if self.debug:
+            print(f"📝 Created {len(test_cases)} test cases")
+            print(f"📊 Categories: {set(tc['category'] for tc in test_cases)}")
+        
+        return test_cases
+    
+    def run_tennis_evaluation(self, 
+                            test_cases: Optional[List[Dict[str, Any]]] = None,
+                            eval_run_name: Optional[str] = None) -> List[TennisEvaluationResult]:
+        """
+        Run comprehensive evaluation of the tennis system.
         
         Args:
-            test_case: Test case dictionary with input and metadata
+            test_cases: Custom test cases, or None to use default cases
+            eval_run_name: Name for this evaluation run
             
         Returns:
-            Expected output string for evaluation
+            List of evaluation results
         """
-        query_type = test_case["context_type"]
-        topics = test_case["expected_topics"]
+        if test_cases is None:
+            test_cases = self.create_tennis_test_cases()
         
-        if query_type == "historical_stats":
-            return f"A factual answer about tennis statistics mentioning key players like {', '.join(topics[:3])} and providing specific numbers or achievements."
+        if eval_run_name is None:
+            eval_run_name = f"tennis_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        elif query_type == "player_comparison":
-            return f"A head-to-head comparison providing specific win-loss records between the mentioned players with factual data."
+        if self.debug:
+            print(f"\n🚀 Starting Tennis System Evaluation")
+            print(f"📊 Eval Run: {eval_run_name}")
+            print(f"📝 Test Cases: {len(test_cases)}")
         
-        elif query_type == "current_rankings":
-            return f"Current ranking information identifying the world number 1 player with recent data from official tennis rankings."
+        # Run tennis system on each test case and collect responses
+        tennis_examples = []
+        tennis_results = []
         
-        elif query_type == "surface_analysis":
-            return f"Surface-specific performance analysis mentioning the player's best surface with supporting statistics or achievements."
-        
-        elif query_type == "achievement_query":
-            return f"A list of players who achieved the Career Grand Slam with factual information about their accomplishments."
-        
-        elif query_type == "general_knowledge":
-            return f"Comprehensive information about major tennis tournaments including the four Grand Slams and other important events."
-        
-        elif query_type == "rules_format":
-            return f"Clear explanation of tennis match format rules providing accurate information about sets and scoring."
-        
-        elif query_type == "performance_records":
-            return f"Information about tennis performance records with specific data about serve speeds and record holders."
-        
-        else:
-            return f"A comprehensive tennis-related answer covering the expected topics: {', '.join(topics)}"
-    
-    def run_evaluation(self, project_name: str = "tennis_agents_eval") -> Dict[str, Any]:
-        """
-        Run comprehensive evaluation of the tennis intelligence system.
-        
-        Args:
-            project_name: Name for the evaluation project
+        for i, test_case in enumerate(test_cases):
+            if self.debug:
+                print(f"\n🎾 Running test case {i+1}/{len(test_cases)}: {test_case['category']}")
+                print(f"❓ Query: {test_case['query']}")
             
-        Returns:
-            Dictionary with evaluation results and analysis
-        """
-        print(f"\n🚀 Starting Tennis Agents Evaluation - Project: {project_name}")
-        print("=" * 60)
+            try:
+                # Create fresh session for each test case to prevent memory contamination
+                fresh_session_id = create_session_id()
+                
+                # Get tennis system response
+                start_time = time.time()
+                result = self.tennis_system.process_query(test_case['query'], fresh_session_id)
+                processing_time = time.time() - start_time
+                
+                # Create retrieval context from sources and metadata
+                retrieval_context = []
+                if result.get('sources'):
+                    retrieval_context.extend(result['sources'])
+                if result.get('tools_called'):
+                    retrieval_context.append(f"Tools used: {', '.join(result['tools_called'])}")
+                if result.get('database_temporal_range'):
+                    retrieval_context.append(f"Database range: {result['database_temporal_range']}")
+                if result.get('sql_query'):
+                    retrieval_context.append(f"SQL Query: {result['sql_query']}")
+                
+                # Create context for Text2SQL evaluation (database schema for SQL queries)
+                context = None
+                if 'query_sql_database' in result.get('tools_called', []):
+                    context = [
+                        """Tennis Database Schema:
+                        
+MAIN TABLES:
+
+1. TENNIS_MATCHES TABLE (13,303 matches from 2023-2025)
+Columns:
+- match_id (INTEGER PRIMARY KEY)
+- tour_type (TEXT: 'ATP', 'WTA')  
+- tournament_name (TEXT)
+- tournament_location (TEXT)
+- match_date (DATE)
+- surface_type (TEXT: 'Hard', 'Clay', 'Grass', 'Carpet')
+- tournament_round (TEXT)
+- winner_id (INTEGER, FK to players)
+- loser_id (INTEGER, FK to players)
+- winner_name (TEXT) 
+- loser_name (TEXT)
+- winner_rank (INTEGER, lower = better)
+- loser_rank (INTEGER, lower = better)
+- winner_points (INTEGER, ATP/WTA points)
+- loser_points (INTEGER, ATP/WTA points)
+- year (INTEGER: 2023-2025)
+- month (INTEGER: 1-12)
+- tournament_level (TEXT: 'Grand Slam', 'ATP/WTA 1000', etc.)
+
+2. PLAYERS TABLE (853 players)
+Columns:
+- player_id (INTEGER PRIMARY KEY)
+- player_name (TEXT)
+- normalized_name (TEXT)
+- tour_type (TEXT: 'ATP', 'WTA', 'BOTH')
+- total_matches (INTEGER)
+- total_wins (INTEGER)
+- best_ranking (INTEGER, lower = better, career best)
+- highest_points (INTEGER)
+- first_appearance_date (DATE)
+- last_appearance_date (DATE)
+
+IMPORTANT NOTES:
+- Player names are stored in abbreviated format: "Djokovic N." not "Novak Djokovic"
+- For "Novak Djokovic" use: winner_name = 'Djokovic N.' OR loser_name = 'Djokovic N.'
+- Ranking queries for specific dates: Use tennis_matches table with winner_rank/loser_rank
+- best_ranking in players table is career-best, not time-specific
+
+VIEWS:
+- player_match_stats: Player statistics with win percentages
+- head_to_head: Head-to-head records between players  
+- surface_performance: Player performance by court surface
+
+Date range: 2023-01-01 to 2025-06-28"""
+                    ]
+                
+                # Use SQL query as actual_output for Text2SQL evaluation if available
+                actual_output_for_sql = result.get('sql_query', result['response'])
+                
+                # Create JudgeVal Example
+                example = Example(
+                    input=test_case['query'],
+                    actual_output=actual_output_for_sql if context else result['response'],
+                    retrieval_context=retrieval_context,
+                    context=context,  # For Text2SQL evaluation
+                    tools_called=result.get('tools_called', []),
+                    expected_tools=test_case.get('expected_tools', []),
+                    additional_metadata={
+                        'category': test_case['category'],
+                        'confidence': result.get('confidence', 0.0),
+                        'processing_time': processing_time,
+                        'expected_characteristics': test_case.get('expected_characteristics', {}),
+                        'tennis_system_metadata': {
+                            'sources': result.get('sources', []),
+                            'sql_data_used': result.get('sql_data_used', False),
+                            'search_data_used': result.get('search_data_used', False),
+                            'langgraph_used': result.get('langgraph_used', False)
+                        }
+                    }
+                )
+                
+                tennis_examples.append(example)
+                
+                # Store result for later analysis
+                tennis_results.append(TennisEvaluationResult(
+                    query=test_case['query'],
+                    response=result['response'],
+                    confidence=result.get('confidence', 0.0),
+                    sources=result.get('sources', []),
+                    tools_called=result.get('tools_called', []),
+                    processing_time=processing_time,
+                    evaluation_scores={},  # Will be filled after JudgeVal evaluation
+                    success=not result.get('error', False),
+                    errors=[result.get('error')] if result.get('error') else []
+                ))
+                
+                if self.debug:
+                    print(f"✅ Response: {result['response'][:100]}...")
+                    print(f"🔧 Tools: {result.get('tools_called', [])}")
+                    print(f"⏱️  Time: {processing_time:.2f}s")
+                
+            except Exception as e:
+                error_msg = f"Error processing query: {str(e)}"
+                print(f"❌ {error_msg}")
+                
+                # Create error example for evaluation
+                example = Example(
+                    input=test_case['query'],
+                    actual_output=error_msg,
+                    retrieval_context=[],
+                    additional_metadata={
+                        'category': test_case['category'],
+                        'error': True,
+                        'error_type': type(e).__name__
+                    }
+                )
+                tennis_examples.append(example)
+                
+                # Store error result
+                tennis_results.append(TennisEvaluationResult(
+                    query=test_case['query'],
+                    response=error_msg,
+                    confidence=0.0,
+                    sources=[],
+                    tools_called=[],
+                    processing_time=0.0,
+                    evaluation_scores={},
+                    success=False,
+                    errors=[error_msg]
+                ))
         
-        # Create test examples
-        examples = self.create_test_examples()
-        
-        # Run judgeval evaluation
-        print("\n📊 Running judgeval evaluation...")
-        eval_start_time = time.time()
+        # Run JudgeVal evaluation
+        if self.debug:
+            print(f"\n🔍 Running JudgeVal evaluation with {len(self.scorers)} scorers...")
         
         try:
-            results = self.judgment_client.run_evaluation(
-                examples=examples,
+            scoring_results = self.judgment_client.run_evaluation(
+                examples=tennis_examples,
                 scorers=self.scorers,
-                model="gpt-4o",  # Use high-quality model for evaluation
-                project_name=project_name,
-                eval_run_name=f"tennis_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                override=True
+                model="gpt-4o",  # Use latest model for evaluation
+                project_name=self.project_name,
+                eval_run_name=eval_run_name,
+                override=True  # Allow overwriting for iterative testing
             )
             
-            eval_duration = time.time() - eval_start_time
-            print(f"✅ Evaluation completed in {eval_duration:.2f} seconds")
+            if self.debug:
+                print(f"✅ JudgeVal evaluation completed: {len(scoring_results)} results")
             
         except Exception as e:
-            print(f"❌ Evaluation failed: {e}")
-            return {"error": str(e)}
+            print(f"❌ JudgeVal evaluation failed: {e}")
+            scoring_results = []
         
-        # Analyze and summarize results
-        analysis = self._analyze_results(results, examples)
+        # Merge JudgeVal scores with tennis results
+        for i, tennis_result in enumerate(tennis_results):
+            if i < len(scoring_results) and scoring_results[i].scorers_data:
+                # Extract scores from JudgeVal results
+                scores = {}
+                for scorer_data in scoring_results[i].scorers_data:
+                    scores[scorer_data.name] = {
+                        'score': scorer_data.score,
+                        'success': scorer_data.success,
+                        'reason': scorer_data.reason,
+                        'threshold': scorer_data.threshold
+                    }
+                tennis_result.evaluation_scores = scores
         
-        # Display results
-        self._display_results(analysis)
-        
-        return analysis
+        return tennis_results
     
-    def _analyze_results(self, results: List, examples: List[Example]) -> Dict[str, Any]:
+    def analyze_evaluation_results(self, results: List[TennisEvaluationResult]) -> Dict[str, Any]:
         """
-        Analyze evaluation results and create comprehensive summary.
+        Analyze evaluation results and provide comprehensive insights.
         
         Args:
-            results: List of ScoringResult objects from judgeval
-            examples: List of Example objects that were evaluated
+            results: List of evaluation results
             
         Returns:
-            Dictionary with detailed analysis
+            Dictionary containing analysis summary
         """
-        print("\n🔍 Analyzing evaluation results...")
+        if not results:
+            return {"error": "No results to analyze"}
         
         analysis = {
-            "overall_metrics": {},
-            "scorer_breakdown": {},
-            "query_type_performance": {},
-            "individual_results": [],
-            "recommendations": []
+            "summary": {
+                "total_queries": len(results),
+                "successful_queries": sum(1 for r in results if r.success),
+                "failed_queries": sum(1 for r in results if not r.success),
+                "average_confidence": sum(r.confidence for r in results) / len(results),
+                "average_processing_time": sum(r.processing_time for r in results) / len(results)
+            },
+            "tool_usage": {},
+            "category_performance": {},
+            "evaluation_scores": {},
+            "issues_found": []
         }
         
-        # Initialize counters
-        total_examples = len(examples)
-        scorer_totals = {scorer.__class__.__name__.replace("Scorer", ""): {"passed": 0, "total": 0, "scores": []} 
-                        for scorer in self.scorers}
+        # Analyze tool usage
+        all_tools = set()
+        for result in results:
+            all_tools.update(result.tools_called)
         
-        query_type_performance = {}
-        
-        # Analyze each result
-        for i, (result, example) in enumerate(zip(results, examples)):
-            query_type = example.additional_metadata.get("context_type", "unknown")
-            
-            if query_type not in query_type_performance:
-                query_type_performance[query_type] = {"passed": 0, "total": 0, "avg_score": 0, "scores": []}
-            
-            example_analysis = {
-                "query": example.input,
-                "query_type": query_type,
-                "system_response": example.actual_output,
-                "system_confidence": example.additional_metadata.get("system_confidence", 0),
-                "sources_used": example.additional_metadata.get("sources_used", []),
-                "scorer_results": {}
+        for tool in all_tools:
+            usage_count = sum(1 for r in results if tool in r.tools_called)
+            analysis["tool_usage"][tool] = {
+                "count": usage_count,
+                "percentage": (usage_count / len(results)) * 100
             }
+        
+        # Analyze performance by category
+        categories = set()
+        for result in results:
+            # Extract category from evaluation scores metadata if available
+            category = "unknown"
+            if result.evaluation_scores and isinstance(result.evaluation_scores, dict):
+                # Try to extract category from the first scorer's metadata
+                for scorer_name, scorer_data in result.evaluation_scores.items():
+                    if isinstance(scorer_data, dict) and 'category' in str(scorer_data):
+                        category = "extracted_from_scorer"
+                        break
+            categories.add(category)
+        
+        for category in categories:
+            category_results = [r for r in results if category == "unknown"]  # Simplified for now
+            if category_results:
+                analysis["category_performance"][category] = {
+                    "total": len(category_results),
+                    "successful": sum(1 for r in category_results if r.success),
+                    "average_confidence": sum(r.confidence for r in category_results) / len(category_results)
+                }
+        
+        # Analyze evaluation scores
+        if results and results[0].evaluation_scores:
+            scorer_names = set()
+            for result in results:
+                if result.evaluation_scores:
+                    scorer_names.update(result.evaluation_scores.keys())
             
-            # Analyze individual scorer results
-            for scorer_data in result.scorer_data:
-                scorer_name = scorer_data.score_type.replace("_", " ").title().replace(" ", "")
-                if scorer_name.endswith("Scorer"):
-                    scorer_name = scorer_name[:-6]  # Remove "Scorer" suffix
+            for scorer_name in scorer_names:
+                scores = []
+                successes = []
+                for result in results:
+                    if result.evaluation_scores and scorer_name in result.evaluation_scores:
+                        scorer_data = result.evaluation_scores[scorer_name]
+                        if isinstance(scorer_data, dict):
+                            if 'score' in scorer_data and scorer_data['score'] is not None:
+                                scores.append(scorer_data['score'])
+                            if 'success' in scorer_data:
+                                successes.append(scorer_data['success'])
                 
-                score = scorer_data.score
-                success = scorer_data.success
-                reason = scorer_data.reason
-                
-                # Update scorer totals
-                if scorer_name in scorer_totals:
-                    scorer_totals[scorer_name]["total"] += 1
-                    scorer_totals[scorer_name]["scores"].append(score)
-                    if success:
-                        scorer_totals[scorer_name]["passed"] += 1
-                
-                # Update query type performance
-                query_type_performance[query_type]["total"] += 1
-                query_type_performance[query_type]["scores"].append(score)
-                if success:
-                    query_type_performance[query_type]["passed"] += 1
-                
-                example_analysis["scorer_results"][scorer_name] = {
-                    "score": score,
-                    "passed": success,
-                    "reason": reason
-                }
+                if scores:
+                    analysis["evaluation_scores"][scorer_name] = {
+                        "average_score": sum(scores) / len(scores),
+                        "min_score": min(scores),
+                        "max_score": max(scores),
+                        "success_rate": sum(successes) / len(successes) if successes else 0,
+                        "total_evaluated": len(scores)
+                    }
+        
+        # Identify issues
+        for result in results:
+            if not result.success:
+                analysis["issues_found"].append({
+                    "query": result.query,
+                    "errors": result.errors,
+                    "type": "system_failure"
+                })
             
-            analysis["individual_results"].append(example_analysis)
-        
-        # Calculate overall metrics
-        total_tests = sum(data["total"] for data in scorer_totals.values())
-        total_passed = sum(data["passed"] for data in scorer_totals.values())
-        
-        analysis["overall_metrics"] = {
-            "total_examples": total_examples,
-            "total_tests": total_tests,
-            "overall_pass_rate": (total_passed / total_tests * 100) if total_tests > 0 else 0,
-            "average_system_confidence": sum(ex.additional_metadata.get("system_confidence", 0) 
-                                           for ex in examples) / len(examples)
-        }
-        
-        # Calculate scorer breakdown
-        for scorer_name, data in scorer_totals.items():
-            if data["total"] > 0:
-                analysis["scorer_breakdown"][scorer_name] = {
-                    "pass_rate": (data["passed"] / data["total"] * 100),
-                    "average_score": sum(data["scores"]) / len(data["scores"]),
-                    "total_tests": data["total"],
-                    "passed_tests": data["passed"]
-                }
-        
-        # Calculate query type performance
-        for query_type, data in query_type_performance.items():
-            if data["total"] > 0:
-                analysis["query_type_performance"][query_type] = {
-                    "pass_rate": (data["passed"] / data["total"] * 100),
-                    "average_score": sum(data["scores"]) / len(data["scores"]),
-                    "total_tests": data["total"]
-                }
-        
-        # Generate recommendations
-        analysis["recommendations"] = self._generate_recommendations(analysis)
+            # Check for low confidence responses
+            if result.confidence < 0.5:
+                analysis["issues_found"].append({
+                    "query": result.query,
+                    "confidence": result.confidence,
+                    "type": "low_confidence"
+                })
+            
+            # Check for evaluation failures
+            if result.evaluation_scores:
+                for scorer_name, scorer_data in result.evaluation_scores.items():
+                    if isinstance(scorer_data, dict) and not scorer_data.get('success', True):
+                        analysis["issues_found"].append({
+                            "query": result.query,
+                            "scorer": scorer_name,
+                            "reason": scorer_data.get('reason', 'Unknown'),
+                            "type": "evaluation_failure"
+                        })
         
         return analysis
     
-    def _generate_recommendations(self, analysis: Dict[str, Any]) -> List[str]:
-        """
-        Generate recommendations based on evaluation results.
+    def print_evaluation_report(self, results: List[TennisEvaluationResult]):
+        """Print a comprehensive evaluation report."""
+        analysis = self.analyze_evaluation_results(results)
         
-        Args:
-            analysis: Analysis dictionary with results
+        print("\n" + "="*80)
+        print("🎾 TENNIS INTELLIGENCE SYSTEM - EVALUATION REPORT")
+        print("="*80)
+        
+        # Summary
+        summary = analysis["summary"]
+        print(f"\n📊 SUMMARY:")
+        print(f"   • Total Queries: {summary['total_queries']}")
+        print(f"   • Successful: {summary['successful_queries']} ({summary['successful_queries']/summary['total_queries']*100:.1f}%)")
+        print(f"   • Failed: {summary['failed_queries']} ({summary['failed_queries']/summary['total_queries']*100:.1f}%)")
+        print(f"   • Average Confidence: {summary['average_confidence']:.2f}")
+        print(f"   • Average Processing Time: {summary['average_processing_time']:.2f}s")
+        
+        # Tool Usage
+        if analysis["tool_usage"]:
+            print(f"\n🔧 TOOL USAGE:")
+            for tool, stats in analysis["tool_usage"].items():
+                print(f"   • {tool}: {stats['count']} times ({stats['percentage']:.1f}%)")
+        
+        # Evaluation Scores
+        if analysis["evaluation_scores"]:
+            print(f"\n🔍 EVALUATION SCORES:")
+            for scorer, stats in analysis["evaluation_scores"].items():
+                print(f"   • {scorer}:")
+                print(f"     - Average Score: {stats['average_score']:.3f}")
+                print(f"     - Success Rate: {stats['success_rate']:.1%}")
+                print(f"     - Range: {stats['min_score']:.3f} - {stats['max_score']:.3f}")
+        
+        # Issues Found
+        if analysis["issues_found"]:
+            print(f"\n⚠️  ISSUES FOUND ({len(analysis['issues_found'])}):")
+            issue_types = {}
+            for issue in analysis["issues_found"]:
+                issue_type = issue["type"]
+                if issue_type not in issue_types:
+                    issue_types[issue_type] = 0
+                issue_types[issue_type] += 1
             
-        Returns:
-            List of recommendation strings
-        """
-        recommendations = []
-        scorer_breakdown = analysis.get("scorer_breakdown", {})
-        query_performance = analysis.get("query_type_performance", {})
+            for issue_type, count in issue_types.items():
+                print(f"   • {issue_type}: {count} issues")
         
-        # Check scorer performance
-        for scorer_name, data in scorer_breakdown.items():
-            pass_rate = data["pass_rate"]
-            avg_score = data["average_score"]
-            
-            if pass_rate < 70:
-                if scorer_name == "Hallucination":
-                    recommendations.append(f"🚨 High hallucination detected ({pass_rate:.1f}% pass rate). Review data grounding and factual accuracy.")
-                elif scorer_name == "Faithfulness":
-                    recommendations.append(f"📚 Low faithfulness score ({pass_rate:.1f}% pass rate). Improve adherence to source data.")
-                elif scorer_name == "AnswerRelevancy":
-                    recommendations.append(f"🎯 Low relevancy score ({pass_rate:.1f}% pass rate). Enhance query understanding and routing.")
-                elif scorer_name == "AnswerCorrectness":
-                    recommendations.append(f"✅ Low correctness score ({pass_rate:.1f}% pass rate). Verify factual accuracy of responses.")
-                elif scorer_name == "ToolOrder":
-                    recommendations.append(f"⚠️ Tool ordering issue detected ({pass_rate:.1f}% pass rate). Ensure tools are called in the correct sequence.")
-                elif scorer_name == "ToolDependency":
-                    recommendations.append(f"⚠️ Tool dependency issue detected ({pass_rate:.1f}% pass rate). Ensure tools are called in the correct order.")
-                else:
-                    recommendations.append(f"⚠️ {scorer_name} needs improvement ({pass_rate:.1f}% pass rate).")
-        
-        # Check query type performance
-        for query_type, data in query_performance.items():
-            pass_rate = data["pass_rate"]
-            if pass_rate < 70:
-                recommendations.append(f"🔧 {query_type.replace('_', ' ').title()} queries need improvement ({pass_rate:.1f}% pass rate).")
-        
-        # LangGraph-specific analysis and recommendations
-        individual_results = analysis.get("individual_results", [])
-        memory_dependent = [r for r in individual_results if r.get("additional_metadata", {}).get("requires_context")]
-        if memory_dependent:
-            memory_success_rate = sum(1 for r in memory_dependent 
-                                    if any(s["passed"] for s in r["scorer_results"].values())) / len(memory_dependent) * 100
-            if memory_success_rate < 70:
-                recommendations.append(f"🧠 Memory system needs improvement ({memory_success_rate:.1f}% success). Review pronoun resolution and session management.")
-        
-        # Routing accuracy recommendations
-        routing_issues = sum(1 for r in individual_results 
-                           if ((r.get("additional_metadata", {}).get("expected_routing") == "sql_first" and 
-                               not r.get("additional_metadata", {}).get("sql_data_used")) or
-                               (r.get("additional_metadata", {}).get("expected_routing") == "search_first" and 
-                               not r.get("additional_metadata", {}).get("search_data_used"))))
-        if routing_issues > 0:
-            recommendations.append(f"🎯 Query routing needs optimization. {routing_issues} queries used unexpected tools.")
-        
-        # Overall performance recommendations
-        overall_pass_rate = analysis["overall_metrics"]["overall_pass_rate"]
-        if overall_pass_rate > 85:
-            recommendations.append("🎉 Excellent overall performance! LangGraph system working well. Consider fine-tuning for edge cases.")
-        elif overall_pass_rate > 70:
-            recommendations.append("✅ Good overall performance. LangGraph system stable. Focus on specific weak areas identified above.")
-        else:
-            recommendations.append("🔧 Overall performance needs improvement. Review LangGraph workflow, tool routing, and data sources.")
-        
-        return recommendations
+        print("\n" + "="*80)
     
-    def _analyze_tool_usage(self, individual_results: List[Dict[str, Any]]) -> List[str]:
-        """
-        Analyze tool usage across all test examples.
+    def save_evaluation_results(self, 
+                              results: List[TennisEvaluationResult], 
+                              filepath: Optional[str] = None):
+        """Save evaluation results to JSON file."""
+        if filepath is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filepath = f"tennis_evaluation_{timestamp}.json"
         
-        Args:
-            individual_results: List of individual result dictionaries
-            
-        Returns:
-            List of tool usage summary strings
-        """
-        tool_stats = {}
-        total_examples = len(individual_results)
+        # Convert results to serializable format
+        serializable_results = []
+        for result in results:
+            serializable_results.append({
+                "query": result.query,
+                "response": result.response,
+                "confidence": result.confidence,
+                "sources": result.sources,
+                "tools_called": result.tools_called,
+                "processing_time": result.processing_time,
+                "evaluation_scores": result.evaluation_scores,
+                "success": result.success,
+                "errors": result.errors
+            })
         
-        for result in individual_results:
-            metadata = result.get("additional_metadata", {})
-            tools_called = metadata.get("tools_actually_called", [])
-            
-            for tool in tools_called:
-                if tool not in tool_stats:
-                    tool_stats[tool] = 0
-                tool_stats[tool] += 1
+        # Add analysis
+        analysis = self.analyze_evaluation_results(results)
         
-        summary = []
+        output_data = {
+            "timestamp": datetime.now().isoformat(),
+            "project_name": self.project_name,
+            "total_queries": len(results),
+            "analysis": analysis,
+            "detailed_results": serializable_results
+        }
         
-        if tool_stats:
-            summary.append(f"📊 Tool Usage Summary ({total_examples} examples):")
-            for tool, count in sorted(tool_stats.items(), key=lambda x: x[1], reverse=True):
-                percentage = (count / total_examples) * 100
-                summary.append(f"   • {tool}: {count}/{total_examples} ({percentage:.1f}%)")
-        else:
-            summary.append("⚠️ No tool usage detected - check tool calling implementation")
+        with open(filepath, 'w') as f:
+            json.dump(output_data, f, indent=2)
         
-        # Analyze LangGraph tool calling patterns
-        sql_usage = sum(1 for result in individual_results 
-                       if result.get("additional_metadata", {}).get("sql_data_used", False))
-        search_usage = sum(1 for result in individual_results 
-                          if result.get("additional_metadata", {}).get("search_data_used", False))
-        
-        # Memory-related analysis
-        memory_dependent = sum(1 for result in individual_results 
-                              if result.get("additional_metadata", {}).get("requires_context", False))
-        context_setters = sum(1 for result in individual_results 
-                             if result.get("additional_metadata", {}).get("is_context_setter", False))
-        
-        # Routing analysis
-        routing_accuracy = 0
-        routing_total = 0
-        for result in individual_results:
-            expected_routing = result.get("additional_metadata", {}).get("expected_routing")
-            if expected_routing == "sql_first" and result.get("additional_metadata", {}).get("sql_data_used"):
-                routing_accuracy += 1
-            elif expected_routing == "search_first" and result.get("additional_metadata", {}).get("search_data_used"):
-                routing_accuracy += 1
-            routing_total += 1
-        
-        summary.append(f"🔍 LangGraph Tool Pattern Analysis:")
-        summary.append(f"   • SQL Database Tools: {sql_usage}/{total_examples} examples ({sql_usage/total_examples*100:.1f}%)")
-        summary.append(f"   • Online Search Tools: {search_usage}/{total_examples} examples ({search_usage/total_examples*100:.1f}%)")
-        summary.append(f"   • Memory-dependent queries: {memory_dependent}")
-        summary.append(f"   • Context-setting queries: {context_setters}")
-        if routing_total > 0:
-            summary.append(f"   • Routing accuracy: {routing_accuracy}/{routing_total} ({routing_accuracy/routing_total*100:.1f}%)")
-        
-        return summary
-    
-    def _display_results(self, analysis: Dict[str, Any]) -> None:
-        """
-        Display evaluation results in a formatted manner.
-        
-        Args:
-            analysis: Analysis dictionary with results
-        """
-        print("\n" + "=" * 60)
-        print("🎾 TENNIS AGENTS EVALUATION RESULTS")
-        print("=" * 60)
-        
-        # Overall metrics
-        overall = analysis["overall_metrics"]
-        print(f"\n📊 OVERALL PERFORMANCE:")
-        print(f"   Total Examples: {overall['total_examples']}")
-        print(f"   Total Tests: {overall['total_tests']}")
-        print(f"   Overall Pass Rate: {overall['overall_pass_rate']:.1f}%")
-        print(f"   Avg System Confidence: {overall['average_system_confidence']:.2f}")
-        
-        # Scorer breakdown
-        print(f"\n🔍 SCORER BREAKDOWN:")
-        for scorer_name, data in analysis["scorer_breakdown"].items():
-            status_icon = "✅" if data["pass_rate"] >= 70 else "⚠️" if data["pass_rate"] >= 50 else "❌"
-            print(f"   {status_icon} {scorer_name}: {data['pass_rate']:.1f}% pass rate (avg score: {data['average_score']:.2f})")
-        
-        # Query type performance
-        print(f"\n🎯 QUERY TYPE PERFORMANCE:")
-        for query_type, data in analysis["query_type_performance"].items():
-            status_icon = "✅" if data["pass_rate"] >= 70 else "⚠️" if data["pass_rate"] >= 50 else "❌"
-            display_name = query_type.replace('_', ' ').title()
-            print(f"   {status_icon} {display_name}: {data['pass_rate']:.1f}% pass rate (avg score: {data['average_score']:.2f})")
-        
-        # Recommendations
-        if analysis["recommendations"]:
-            print(f"\n💡 RECOMMENDATIONS:")
-            for rec in analysis["recommendations"]:
-                print(f"   {rec}")
-        
-        # Individual results summary
-        print(f"\n📋 INDIVIDUAL RESULTS SUMMARY:")
-        for i, result in enumerate(analysis["individual_results"][:5]):  # Show first 5
-            print(f"\n   Query {i+1}: {result['query'][:60]}...")
-            print(f"   Type: {result['query_type'].replace('_', ' ').title()}")
-            print(f"   System Confidence: {result['system_confidence']:.2f}")
-            
-            # Show tool usage if available
-            tools_used = result.get("tools_used", [])
-            if tools_used:
-                print(f"   Tools Used: {', '.join(tools_used)}")
-            
-            # Show worst performing scorer for this example
-            worst_scorer = min(result["scorer_results"].items(), 
-                             key=lambda x: x[1]["score"])
-            best_scorer = max(result["scorer_results"].items(), 
-                            key=lambda x: x[1]["score"])
-            
-            print(f"   Best Score: {best_scorer[0]} ({best_scorer[1]['score']:.2f})")
-            print(f"   Worst Score: {worst_scorer[0]} ({worst_scorer[1]['score']:.2f})")
-        
-        if len(analysis["individual_results"]) > 5:
-            print(f"   ... and {len(analysis['individual_results']) - 5} more results")
-        
-        # Add LangGraph tool calling and memory analysis
-        print(f"\n🔧 LANGGRAPH SYSTEM ANALYSIS:")
-        tool_usage_summary = self._analyze_tool_usage(analysis["individual_results"])
-        for tool_stat in tool_usage_summary:
-            print(f"   {tool_stat}")
-        
-        # Additional LangGraph-specific metrics
-        langgraph_examples = sum(1 for result in analysis["individual_results"] 
-                               if result.get("additional_metadata", {}).get("langgraph_used", False))
-        print(f"   • LangGraph workflow usage: {langgraph_examples}/{len(analysis['individual_results'])} examples")
-        
-        # Memory system performance
-        memory_dependent = [result for result in analysis["individual_results"] 
-                           if result.get("additional_metadata", {}).get("requires_context", False)]
-        if memory_dependent:
-            memory_success = sum(1 for result in memory_dependent 
-                               if any(score_data["passed"] for score_data in result["scorer_results"].values()))
-            print(f"   • Memory-dependent query success: {memory_success}/{len(memory_dependent)} examples")
-        
-        print("\n" + "=" * 60)
+        print(f"💾 Evaluation results saved to: {filepath}")
 
 
 def main():
-    """Main function to run the tennis agents evaluation."""
-    print("🎾 Tennis Intelligence System - Judgeval Evaluation")
-    print("🚀 LangGraph-Based System with Memory Management")
+    """Main function to run tennis system evaluation."""
+    print("🎾 Tennis Intelligence System - JudgeVal Evaluation")
     print("=" * 60)
     
-    # Check for debug mode - default to True for evaluation
-    debug_mode = os.environ.get('TENNIS_DEBUG', 'True').lower() == 'true'
-    if debug_mode:
-        print("🐛 Debug mode enabled - detailed evaluation output will be shown")
+    # Check for required environment variables
+    if not os.getenv('JUDGMENT_API_KEY'):
+        print("❌ JUDGMENT_API_KEY environment variable not set")
+        print("Please set your JudgeVal API key:")
+        print("export JUDGMENT_API_KEY='your-api-key'")
+        return
+    
+    if not os.getenv('JUDGMENT_ORG_ID'):
+        print("❌ JUDGMENT_ORG_ID environment variable not set")
+        print("Please set your JudgeVal organization ID:")
+        print("export JUDGMENT_ORG_ID='your-org-id'")
+        return
+    
+    # Initialize evaluation suite
+    debug_mode = os.environ.get('TENNIS_DEBUG', 'False').lower() == 'true'
+    eval_suite = TennisEvaluationSuite(debug=debug_mode)
     
     try:
-        # Initialize evaluator with LangGraph system
-        evaluator = TennisAgentsEvaluator(debug=debug_mode)
-        
         # Run evaluation
-        project_name = f"langgraph_tennis_eval_{datetime.now().strftime('%Y%m%d')}"
-        results = evaluator.run_evaluation(project_name)
+        print("\n🚀 Starting comprehensive evaluation...")
+        results = eval_suite.run_tennis_evaluation()
         
-        if "error" not in results:
-            print("\n🎉 Evaluation completed successfully!")
-            print(f"📊 Results saved to judgeval project: {project_name}")
-            
-            # Save detailed results to file
-            results_file = f"langgraph_tennis_eval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(results_file, 'w') as f:
-                json.dump(results, f, indent=2, default=str)
-            print(f"💾 Detailed results saved to: {results_file}")
-            
-            # Print summary of key improvements from LangGraph system
-            print(f"\n🚀 LangGraph System Enhancements Evaluated:")
-            print(f"   • Official tool calling workflow")
-            print(f"   • Session-based memory management")
-            print(f"   • Pronoun resolution capabilities")
-            print(f"   • Clean loading animations")
-            print(f"   • Debug mode toggle")
-            
-            # Check if memory-dependent queries were successful
-            memory_tests = sum(1 for result in results.get("individual_results", []) 
-                             if result.get("query_type") == "memory_dependent")
-            if memory_tests > 0:
-                print(f"   • Memory-dependent queries tested: {memory_tests}")
-        else:
-            print(f"❌ Evaluation failed: {results['error']}")
-            
+        # Print report
+        eval_suite.print_evaluation_report(results)
+        
+        # Save results
+        eval_suite.save_evaluation_results(results)
+        
+        print("\n✅ Evaluation completed successfully!")
+        
+    except KeyboardInterrupt:
+        print("\n⚠️ Evaluation interrupted by user")
     except Exception as e:
-        print(f"❌ Error during evaluation: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\n❌ Evaluation failed: {e}")
+        if debug_mode:
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

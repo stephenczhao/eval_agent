@@ -48,13 +48,14 @@ class TennisIntelligenceSystem:
     enabling comprehensive evaluation with judgeval.
     
     Database Constraints:
-    - SQL database contains tennis data from 2023-2025 only
-    - Queries for data outside this range should use online search
+    - SQL database contains tennis data from 2023-01-01 to 2025-06-28 only
+    - Queries for data after June 2025 and before 2023 should use online search
+    - "Latest", "current", "right now" queries should prefer online search
     """
     
-    # Database temporal constraints
-    DATABASE_START_YEAR = 2023
-    DATABASE_END_YEAR = 2025
+    # Database temporal constraints - precise date range
+    DATABASE_START_DATE = "2023-01-01"
+    DATABASE_END_DATE = "2025-06-28"
     
     def __init__(self, debug: bool = False):
         """Initialize the tennis intelligence system with LangGraph orchestrator."""
@@ -72,9 +73,9 @@ class TennisIntelligenceSystem:
         
         # Add temporal constraints to config for orchestrator
         self.config.database_temporal_range = {
-            'start_year': self.DATABASE_START_YEAR,
-            'end_year': self.DATABASE_END_YEAR,
-            'description': f"SQL database contains tennis data from {self.DATABASE_START_YEAR} to {self.DATABASE_END_YEAR} only"
+            'start_date': self.DATABASE_START_DATE,
+            'end_date': self.DATABASE_END_DATE,
+            'description': f"SQL database contains tennis data from {self.DATABASE_START_DATE} to {self.DATABASE_END_DATE} only. For data after June 2025 or 'latest/current' queries, prefer online search."
         }
         
         # Always use LangGraph orchestrator with built-in memory
@@ -85,7 +86,7 @@ class TennisIntelligenceSystem:
         if self.debug:
             print("✅ Tennis Intelligence System initialized successfully")
             print(f"📊 Database: {self.config.database_path}")
-            print(f"📅 Database Range: {self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}")
+            print(f"📅 Database Range: {self.DATABASE_START_DATE} to {self.DATABASE_END_DATE}")
             print(f"🤖 Model: {self.config.default_model}")
             print(f"🧠 LangGraph Orchestrator with Tool Calling")
     
@@ -112,15 +113,15 @@ class TennisIntelligenceSystem:
             query: User query string
             
         Returns:
-            True if query is likely asking for data outside 2023-2025 range
+            True if query mentions years outside our database range
         """
         years = self._extract_query_years(query)
         if not years:
             return False
         
-        # Check if any mentioned year is outside our database range
+        # Check if any mentioned year is outside our database range (2023-2025)
         for year in years:
-            if year < self.DATABASE_START_YEAR or year > self.DATABASE_END_YEAR:
+            if year < 2023 or year > 2025:
                 return True
         return False
 
@@ -138,24 +139,33 @@ class TennisIntelligenceSystem:
         try:
             start_time = time.time()
             
-            # Check for temporal constraints
+            # Don't add date prefixes to avoid search issues with future dates
+            enhanced_query = user_query
+            
+            # Check for temporal constraints using original query
             outside_db_range = self._is_query_outside_database_range(user_query)
             query_years = self._extract_query_years(user_query)
             
             if self.debug and outside_db_range:
-                print(f"⚠️  Query contains years outside database range ({self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}): {query_years}")
-                print(f"🌐 Routing hint: Should prefer online search for temporal accuracy")
+                print(f"⚠️  Query mentions years outside database range ({self.DATABASE_START_DATE} to {self.DATABASE_END_DATE})")
+                if query_years:
+                    print(f"📅 Query years: {query_years}")
+                print(f"🌐 Note: LLM router will determine best data source")
             
-            print(f"\n🚀 LangGraph Processing: '{user_query}'")
+            if self.debug:
+                print(f"\n🚀 LangGraph Processing: '{user_query}'")
+                # print(f"🕒 Date prefix: [{datetime_str}]")
+            # else:
+            #     print(f"\n🚀 LangGraph Processing: '{user_query}'")
             
-            # Process through LangGraph workflow
-            result = self.orchestrator.process_query(user_query, session_id)
+            # Process through LangGraph workflow with enhanced query
+            result = self.orchestrator.process_query(enhanced_query, session_id)
             
             # Add processing time and temporal analysis
             result['processing_time'] = time.time() - start_time
             result['query_years'] = query_years
             result['outside_database_range'] = outside_db_range
-            result['database_temporal_range'] = f"{self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}"
+            result['database_temporal_range'] = f"{self.DATABASE_START_DATE} to {self.DATABASE_END_DATE}"
             
             # Extract tool calling information (LangGraph tracks this automatically)
             tools_called = []
@@ -207,12 +217,13 @@ def main():
         if debug_mode:
             print("🐛 Debug mode enabled - showing detailed processing steps")
         print("Ask me anything about tennis - players, matches, rankings, etc.")
-        print(f"📅 Database covers: {TennisIntelligenceSystem.DATABASE_START_YEAR}-{TennisIntelligenceSystem.DATABASE_END_YEAR} (for older/newer data, I'll search online)")
+        print(f"📅 Database covers: {TennisIntelligenceSystem.DATABASE_START_DATE} to {TennisIntelligenceSystem.DATABASE_END_DATE}")
+        print("🌐 For latest/current rankings or post-June 2025 data, I'll search online")
         print("Type 'quit' to exit.\n")
         
         while True:
             try:
-                user_input = input("🎾 Your question: ").strip()
+                user_input = input("🎾 Ask me something about tennis: ").strip()
                 
                 if user_input.lower() in ['quit', 'exit', 'q']:
                     print("👋 Goodbye!")
@@ -227,7 +238,7 @@ def main():
                 end_time = time.time()
                 
                 # Display results
-                print(f"\n🤖 Response:")
+                print(f"\n🤖 Answer:")
                 print(f"   {result['response']}")
                 
                 # Only show metadata in debug mode

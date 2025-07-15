@@ -124,9 +124,8 @@ def query_sql_database(user_query: str) -> Dict[str, Any]:
         
         # Step 1: Generate SQL Query
         _debug_print("✨ Step 1: Generating SQL query...")
-        # Handle pronoun resolution - look for context clues in the query
-        enhanced_query = _resolve_pronouns_in_query(user_query)
-        sql_generation_result = generate_sql_query.invoke({"user_query": enhanced_query})
+        # Use original query directly - let the LLM handle all natural language understanding
+        sql_generation_result = generate_sql_query.invoke({"user_query": user_query})
         
         if not sql_generation_result.get('success', False):
             return {

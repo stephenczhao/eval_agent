@@ -63,9 +63,24 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
         
         # Use optimized search prompt with datetime context from get_optimized_prompt
         search_prompt = get_optimized_prompt('search')
-        optimization_prompt = f"""USER QUERY: "{user_query}"\nCONTEXT: {context}\n\nCreate search terms for current rankings, official sources (ATP, WTA, ESPN), and recent content. 
+        optimization_prompt = f"""Transform this tennis query into effective web search terms:
 
-IMPORTANT: Limit your response to 20 words maximum. Return only optimized search keywords:"""
+USER QUERY: "{user_query}"
+
+SEARCH OPTIMIZATION EXAMPLES:
+- "who's the best player right now?" → "current ATP rankings world number 1 tennis"
+- "last tournament winner" → "latest tennis tournament winner ATP WTA recent"
+- "when did he win his last tournament?" → "recent tournament wins tennis championships latest"
+- "current tennis rankings" → "current ATP WTA rankings latest tennis"
+
+STRATEGY:
+- Use "current", "latest", "recent" for temporal context (NOT specific dates)
+- Include "ATP" or "WTA" for official sources  
+- Add "tennis" as core keyword
+- Be specific about what you're looking for
+- Avoid future dates - use relative terms only
+
+Generate effective search terms (max 15 words):"""
 
         response = llm.invoke([
             SystemMessage(content=search_prompt),
@@ -74,11 +89,11 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
         
         optimized_query = response.content.strip()
         
-        # Ensure 20-word limit
+        # Ensure 15-word limit for better search effectiveness
         words = optimized_query.split()
-        if len(words) > 20:
-            optimized_query = ' '.join(words[:20])
-            _debug_print(f"   ⚠️ Truncated query to 20 words: {optimized_query}")
+        if len(words) > 15:
+            optimized_query = ' '.join(words[:15])
+            _debug_print(f"   ⚠️ Truncated query to 15 words: {optimized_query}")
         
         return {
             "success": True,
@@ -89,20 +104,29 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
         }
         
     except Exception as e:
-        # Fallback to basic optimization
-        fallback_query = f"tennis {user_query} current rankings latest"
+        # Intelligent fallback based on query content
+        query_lower = user_query.lower()
         
-        # Ensure fallback doesn't exceed 20 words
+        if "best player" in query_lower or "number 1" in query_lower or "#1" in query_lower:
+            fallback_query = "current ATP rankings world number 1 tennis latest"
+        elif "last tournament" in query_lower or "latest tournament" in query_lower:
+            fallback_query = "latest tennis tournament winner ATP WTA recent"
+        elif "ranking" in query_lower:
+            fallback_query = "current ATP WTA rankings tennis latest"
+        else:
+            fallback_query = f"tennis latest current {user_query}"
+        
+        # Ensure fallback doesn't exceed 15 words
         words = fallback_query.split()
-        if len(words) > 20:
-            fallback_query = ' '.join(words[:20])
+        if len(words) > 15:
+            fallback_query = ' '.join(words[:15])
         
         return {
             "success": True,
             "optimized_query": fallback_query,
             "original_query": user_query,
             "optimization_applied": False,
-            "reasoning": f"Fallback optimization used: {str(e)}"
+            "reasoning": f"Intelligent fallback optimization used: {str(e)}"
         }
 
 
@@ -272,7 +296,7 @@ def online_search(user_query: str, context: str = "") -> Dict[str, Any]:
         search_prompt = get_optimized_prompt('search')
         optimization_prompt = f"""USER QUERY: "{user_query}"\nCONTEXT: {context}\n\nCreate search terms for current rankings, official sources (ATP, WTA, ESPN), and recent content. 
 
-IMPORTANT: Limit your response to 20 words maximum. Return only optimized search keywords:"""
+IMPORTANT: Use relative terms like "current", "latest", "recent" - NOT specific dates. Limit your response to 20 words maximum. Return only optimized search keywords:"""
         
         try:
             response = llm.invoke([
@@ -289,7 +313,7 @@ IMPORTANT: Limit your response to 20 words maximum. Return only optimized search
             
             _debug_print(f"   ✅ Optimized query: {optimized_query}")
         except Exception as e:
-            optimized_query = f"tennis {user_query} current rankings latest"
+            optimized_query = f"tennis latest current {user_query}"
             
             # Ensure fallback doesn't exceed 20 words
             words = optimized_query.split()
