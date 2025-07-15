@@ -45,7 +45,7 @@ def install_dependencies():
     ]
     
     for dep in core_deps:
-        if not run_command(f"pip install {dep}", f"Installing {dep}"):
+        if not run_command(f"pip install \"{dep}\"", f"Installing {dep}"):
             return False
     
     # Optional dependencies (visualization)
@@ -56,7 +56,7 @@ def install_dependencies():
     
     print("📊 Installing optional visualization dependencies...")
     for dep in optional_deps:
-        run_command(f"pip install {dep}", f"Installing {dep}")
+        run_command(f"pip install \"{dep}\"", f"Installing {dep}")
     
     return True
 
@@ -114,33 +114,10 @@ def create_config_backup():
             print("✅ Created backup of existing configuration")
     return True
 
-def show_next_steps():
-    """Show next steps for integration."""
-    print("\n" + "="*60)
-    print("🎉 OPTIMIZATION SETUP COMPLETE!")
-    print("="*60)
-    print()
-    print("📋 NEXT STEPS:")
-    print("1. Review the OPTIMIZATION_INTEGRATION_GUIDE.md")
-    print("2. Update your tennis_system.py with enhanced components:")
-    print("   - Replace MemoryManager with EnhancedMemoryManager")
-    print("   - Replace OrchestratorAgent with EnhancedOrchestrator")
-    print("3. Test the system with: python tennis_system.py")
-    print("4. Monitor performance with the 'stats' command")
-    print()
-    print("📈 EXPECTED IMPROVEMENTS:")
-    print("• 65% reduction in token usage")
-    print("• 30-50% faster response times")
-    print("• 80% better context awareness")
-    print("• 90% fewer system failures")
-    print()
-    print("📚 For detailed integration instructions, see:")
-    print("   OPTIMIZATION_INTEGRATION_GUIDE.md")
-    print("="*60)
 
 def main():
     """Main setup function."""
-    print("🎾 Tennis Intelligence System - Optimization Setup")
+    print("🎾 Tennis Intelligence System - Setup")
     print("=" * 50)
     
     # Check Python version
@@ -165,8 +142,6 @@ def main():
     # Create config backup
     create_config_backup()
     
-    # Show next steps
-    show_next_steps()
 
 if __name__ == "__main__":
     main() 
