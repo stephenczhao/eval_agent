@@ -4,6 +4,9 @@ Tennis Intelligence System - Judgeval Evaluation Implementation
 
 This script implements comprehensive evaluation of the tennis intelligence system
 using judgeval scorers to assess answer quality, relevancy, faithfulness, and correctness.
+
+Updated to use the new LangGraph-based tennis agents system with proper tool calling,
+memory management, and workflow orchestration.
 """
 
 import os
@@ -36,19 +39,25 @@ from judgeval.scorers import (
     ToolDependencyScorer
 )
 
-# Import tennis system components
+# Import the new LangGraph-based tennis system
 try:
-    from tennis_agents import TennisIntelligenceSystem
-    from utils.simple_memory_manager import create_session_id
+    from tennis_agents import TennisIntelligenceSystem, create_session_id
 except ImportError as e:
     print(f"❌ Import Error: {e}")
     print("Please ensure you're running from the eval_agent directory")
+    print("and that tennis_agents.py contains the LangGraph-based system")
     sys.exit(1)
 
 
 class TennisAgentsEvaluator:
     """
     Comprehensive evaluator for the Tennis Intelligence System using judgeval.
+    
+    Now uses the LangGraph-based tennis system with:
+    - Official tool calling through LangGraph workflows
+    - Session-based memory management with pronoun resolution
+    - Proper tool execution tracking and metadata
+    - Clean loading animations and debug modes
     
     Tests various aspects of the system:
     - Answer relevancy to tennis queries
@@ -57,14 +66,17 @@ class TennisAgentsEvaluator:
     - Hallucination detection
     - Instruction adherence
     - Groundedness in sources
+    - Tool usage patterns and dependencies
     """
     
-    def __init__(self):
-        """Initialize the evaluator with tennis system and judgeval client."""
-        print("🎾 Initializing Tennis Agents Evaluator...")
+    def __init__(self, debug: bool = False):
+        """Initialize the evaluator with LangGraph tennis system and judgeval client."""
+        print("🎾 Initializing Tennis Agents Evaluator with LangGraph System...")
         
-        # Initialize tennis intelligence system with LangGraph for proper tool calling
-        self.tennis_system = TennisIntelligenceSystem()
+        # Initialize tennis intelligence system with LangGraph orchestrator
+        # Debug mode disabled for evaluation to get clean outputs
+        self.tennis_system = TennisIntelligenceSystem(debug=debug)
+        self.debug = debug
         
         # Initialize judgeval client
         self.judgment_client = JudgmentClient()
@@ -83,11 +95,19 @@ class TennisAgentsEvaluator:
         
         print("✅ Tennis Agents Evaluator initialized successfully")
         print(f"📊 Configured {len(self.scorers)} evaluation scorers")
-        print("🚀 Using LangGraph system with official tool calling")
+        print("🚀 Using LangGraph system with official tool calling and memory management")
+        if debug:
+            print("🐛 Debug mode enabled for detailed evaluation output")
     
     def create_test_examples(self) -> List[Example]:
         """
         Create comprehensive test examples covering different tennis query types.
+        
+        Now includes tests for:
+        - Memory-based queries (pronoun resolution)
+        - Current vs historical data routing
+        - Tool calling sequences
+        - Multi-turn conversations
         
         Returns:
             List of Example objects for evaluation
@@ -97,49 +117,84 @@ class TennisAgentsEvaluator:
                 "input": "Who won the most Grand Slam titles in men's tennis?",
                 "description": "Statistical query about historical tennis records",
                 "expected_topics": ["Novak Djokovic", "Rafael Nadal", "Roger Federer", "Grand Slam"],
-                "context_type": "historical_stats"
+                "context_type": "historical_stats",
+                "expected_tools": ["query_sql_database"],
+                "expected_routing": "sql_first"
             },
             {
                 "input": "What is Novak Djokovic's head-to-head record against Rafael Nadal?", 
                 "description": "Head-to-head statistical query",
                 "expected_topics": ["Djokovic", "Nadal", "head-to-head", "wins", "losses"],
-                "context_type": "player_comparison"
+                "context_type": "player_comparison",
+                "expected_tools": ["query_sql_database"],
+                "expected_routing": "sql_first"
             },
             {
                 "input": "Who is the current world number 1 in men's tennis?",
                 "description": "Current ranking query requiring recent information",
                 "expected_topics": ["ranking", "ATP", "number 1", "current"],
-                "context_type": "current_rankings"
+                "context_type": "current_rankings",
+                "expected_tools": ["online_search"],
+                "expected_routing": "search_first"
             },
             {
                 "input": "What surface does Rafael Nadal perform best on?",
                 "description": "Surface performance analysis",
                 "expected_topics": ["Nadal", "clay", "surface", "French Open", "performance"],
-                "context_type": "surface_analysis"
+                "context_type": "surface_analysis",
+                "expected_tools": ["query_sql_database"],
+                "expected_routing": "sql_first"
             },
             {
                 "input": "Which tennis players have won all four Grand Slams?",
                 "description": "Achievement-based query about Career Grand Slam",
                 "expected_topics": ["Career Grand Slam", "Wimbledon", "US Open", "French Open", "Australian Open"],
-                "context_type": "achievement_query"
+                "context_type": "achievement_query",
+                "expected_tools": ["query_sql_database"],
+                "expected_routing": "sql_first"
             },
             {
                 "input": "What are the major tennis tournaments?",
                 "description": "General tennis knowledge query",
                 "expected_topics": ["Grand Slam", "ATP Masters", "tournaments", "Wimbledon", "US Open"],
-                "context_type": "general_knowledge"
+                "context_type": "general_knowledge",
+                "expected_tools": ["online_search"],
+                "expected_routing": "search_first"
             },
             {
                 "input": "How many sets are played in a men's Grand Slam match?",
                 "description": "Tennis rules and format query",
                 "expected_topics": ["best of five", "sets", "Grand Slam", "men's"],
-                "context_type": "rules_format"
+                "context_type": "rules_format",
+                "expected_tools": ["online_search"],
+                "expected_routing": "search_first"
             },
             {
                 "input": "Who has the fastest serve in tennis history?",
                 "description": "Tennis record query about serve speed",
                 "expected_topics": ["serve speed", "fastest", "mph", "km/h", "record"],
-                "context_type": "performance_records"
+                "context_type": "performance_records",
+                "expected_tools": ["online_search"],
+                "expected_routing": "search_first"
+            },
+            # New memory-based queries to test LangGraph session management
+            {
+                "input": "Who is the best player right now?",
+                "description": "Initial query to establish context for follow-up",
+                "expected_topics": ["ranking", "ATP", "WTA", "current", "best"],
+                "context_type": "current_rankings",
+                "expected_tools": ["online_search"],
+                "expected_routing": "search_first",
+                "is_context_setter": True
+            },
+            {
+                "input": "How many games did he play in 2025?",
+                "description": "Memory-dependent query testing pronoun resolution",
+                "expected_topics": ["games", "matches", "2025", "statistics"],
+                "context_type": "memory_dependent",
+                "expected_tools": ["query_sql_database"],
+                "expected_routing": "sql_first",
+                "requires_context": True
             }
         ]
         
@@ -147,37 +202,35 @@ class TennisAgentsEvaluator:
         session_id = create_session_id()
         
         print("🔄 Generating tennis system responses for evaluation...")
+        print(f"📋 Session ID: {session_id}")
         
         for i, test_case in enumerate(test_queries):
             print(f"Processing query {i+1}/{len(test_queries)}: {test_case['input']}")
             
-            # Get response from tennis system
+            # Get response from tennis system using LangGraph orchestrator
             start_time = time.time()
             result = self.tennis_system.process_query(test_case["input"], session_id)
             processing_time = time.time() - start_time
             
-            # Extract key information from the result
+            # Extract key information from the LangGraph result
             actual_output = result.get('response', '')
             sources = result.get('sources', [])
             confidence = result.get('confidence', 0.0)
             sql_data_used = result.get('sql_data_used', False)
             search_data_used = result.get('search_data_used', False)
-            tools_called_actual = result.get('tools_called', [])  # From LangGraph system
+            tools_called_actual = result.get('tools_called', [])
             langgraph_used = result.get('langgraph_used', False)
+            processing_time_actual = result.get('processing_time', processing_time)
             
-            # Create tools_called list based on what the system actually used
-            tools_called = tools_called_actual if tools_called_actual else []
-            expected_tools = []
+            # Map LangGraph tools to expected judgeval tool names
+            tools_called = []
+            if sql_data_used:
+                tools_called.append('query_sql_database')
+            if search_data_used:
+                tools_called.append('online_search')
             
-            # Determine expected tools based on query type
-            query_type = test_case["context_type"]
-            if query_type in ["historical_stats", "player_comparison", "surface_analysis", "achievement_query"]:
-                expected_tools.extend(["generate_sql_query", "execute_sql_query", "interpret_sql_results"])
-            elif query_type in ["current_rankings", "general_knowledge", "rules_format", "performance_records"]:
-                expected_tools.extend(["optimize_search_query", "tavily_search_tool", "interpret_search_results"])
-            else:
-                # Mixed or unknown - could use either
-                expected_tools.extend(["generate_sql_query", "tavily_search_tool"])
+            # Get expected tools from test case
+            expected_tools = test_case.get("expected_tools", [])
             
             # Create retrieval context from sources and metadata
             retrieval_context = []
@@ -195,17 +248,27 @@ class TennisAgentsEvaluator:
             if search_data_used:
                 retrieval_context.append("Used web search for current information")
             
-            # Add LangGraph information
+            # Add LangGraph-specific information
             if langgraph_used:
                 retrieval_context.append("Processed using LangGraph workflow with official tool calling")
+                retrieval_context.append("Session-based memory management with pronoun resolution")
             
             # Add expected topics for evaluation context
             retrieval_context.append(f"Expected topics: {', '.join(test_case['expected_topics'])}")
             retrieval_context.append(f"Query type: {test_case['context_type']}")
+            retrieval_context.append(f"Expected routing: {test_case.get('expected_routing', 'adaptive')}")
             
-            # Add tool usage information to context for hallucination scorer
+            # Add tool usage information
             if tools_called:
                 retrieval_context.append(f"Tools executed: {', '.join(tools_called)}")
+            if expected_tools:
+                retrieval_context.append(f"Expected tools: {', '.join(expected_tools)}")
+            
+            # Memory context information
+            if test_case.get('requires_context'):
+                retrieval_context.append("Query requires context from previous conversation")
+            if test_case.get('is_context_setter'):
+                retrieval_context.append("Query establishes context for future queries")
             
             # Create context field for hallucination scorer (required parameter)
             context_for_hallucination = retrieval_context.copy()
@@ -225,21 +288,31 @@ class TennisAgentsEvaluator:
                 additional_metadata={
                     "description": test_case["description"],
                     "context_type": test_case["context_type"],
-                    "processing_time": processing_time,
+                    "processing_time": processing_time_actual,
                     "system_confidence": confidence,
                     "sources_used": sources,
                     "sql_data_used": sql_data_used,
                     "search_data_used": search_data_used,
                     "tools_actually_called": tools_called,
                     "tools_expected": expected_tools,
-                    "langgraph_used": langgraph_used
+                    "langgraph_used": langgraph_used,
+                    "expected_routing": test_case.get("expected_routing", "adaptive"),
+                    "requires_context": test_case.get("requires_context", False),
+                    "is_context_setter": test_case.get("is_context_setter", False),
+                    "session_id": session_id
                 }
             )
             
             examples.append(example)
             print(f"  ✅ Generated example with {len(retrieval_context)} context items")
+            
+            # Add small delay for memory-dependent queries
+            if test_case.get('requires_context'):
+                time.sleep(0.5)  # Allow session memory to be properly maintained
         
         print(f"🎯 Created {len(examples)} test examples for evaluation")
+        print(f"🧠 Memory-dependent queries: {sum(1 for ex in examples if ex.additional_metadata.get('requires_context'))}")
+        print(f"📊 Context-setting queries: {sum(1 for ex in examples if ex.additional_metadata.get('is_context_setter'))}")
         return examples
     
     def _generate_expected_output(self, test_case: Dict[str, Any]) -> str:
@@ -479,14 +552,32 @@ class TennisAgentsEvaluator:
             if pass_rate < 70:
                 recommendations.append(f"🔧 {query_type.replace('_', ' ').title()} queries need improvement ({pass_rate:.1f}% pass rate).")
         
+        # LangGraph-specific analysis and recommendations
+        individual_results = analysis.get("individual_results", [])
+        memory_dependent = [r for r in individual_results if r.get("additional_metadata", {}).get("requires_context")]
+        if memory_dependent:
+            memory_success_rate = sum(1 for r in memory_dependent 
+                                    if any(s["passed"] for s in r["scorer_results"].values())) / len(memory_dependent) * 100
+            if memory_success_rate < 70:
+                recommendations.append(f"🧠 Memory system needs improvement ({memory_success_rate:.1f}% success). Review pronoun resolution and session management.")
+        
+        # Routing accuracy recommendations
+        routing_issues = sum(1 for r in individual_results 
+                           if ((r.get("additional_metadata", {}).get("expected_routing") == "sql_first" and 
+                               not r.get("additional_metadata", {}).get("sql_data_used")) or
+                               (r.get("additional_metadata", {}).get("expected_routing") == "search_first" and 
+                               not r.get("additional_metadata", {}).get("search_data_used"))))
+        if routing_issues > 0:
+            recommendations.append(f"🎯 Query routing needs optimization. {routing_issues} queries used unexpected tools.")
+        
         # Overall performance recommendations
         overall_pass_rate = analysis["overall_metrics"]["overall_pass_rate"]
         if overall_pass_rate > 85:
-            recommendations.append("🎉 Excellent overall performance! Consider fine-tuning for edge cases.")
+            recommendations.append("🎉 Excellent overall performance! LangGraph system working well. Consider fine-tuning for edge cases.")
         elif overall_pass_rate > 70:
-            recommendations.append("✅ Good overall performance. Focus on specific weak areas identified above.")
+            recommendations.append("✅ Good overall performance. LangGraph system stable. Focus on specific weak areas identified above.")
         else:
-            recommendations.append("🔧 Overall performance needs improvement. Review system architecture and data sources.")
+            recommendations.append("🔧 Overall performance needs improvement. Review LangGraph workflow, tool routing, and data sources.")
         
         return recommendations
     
@@ -522,15 +613,36 @@ class TennisAgentsEvaluator:
         else:
             summary.append("⚠️ No tool usage detected - check tool calling implementation")
         
-        # Analyze tool calling patterns
+        # Analyze LangGraph tool calling patterns
         sql_usage = sum(1 for result in individual_results 
-                       if any('sql' in tool.lower() for tool in result.get("additional_metadata", {}).get("tools_actually_called", [])))
+                       if result.get("additional_metadata", {}).get("sql_data_used", False))
         search_usage = sum(1 for result in individual_results 
-                          if any('search' in tool.lower() for tool in result.get("additional_metadata", {}).get("tools_actually_called", [])))
+                          if result.get("additional_metadata", {}).get("search_data_used", False))
         
-        summary.append(f"🔍 Pattern Analysis:")
-        summary.append(f"   • SQL Tools Used: {sql_usage}/{total_examples} examples")
-        summary.append(f"   • Search Tools Used: {search_usage}/{total_examples} examples")
+        # Memory-related analysis
+        memory_dependent = sum(1 for result in individual_results 
+                              if result.get("additional_metadata", {}).get("requires_context", False))
+        context_setters = sum(1 for result in individual_results 
+                             if result.get("additional_metadata", {}).get("is_context_setter", False))
+        
+        # Routing analysis
+        routing_accuracy = 0
+        routing_total = 0
+        for result in individual_results:
+            expected_routing = result.get("additional_metadata", {}).get("expected_routing")
+            if expected_routing == "sql_first" and result.get("additional_metadata", {}).get("sql_data_used"):
+                routing_accuracy += 1
+            elif expected_routing == "search_first" and result.get("additional_metadata", {}).get("search_data_used"):
+                routing_accuracy += 1
+            routing_total += 1
+        
+        summary.append(f"🔍 LangGraph Tool Pattern Analysis:")
+        summary.append(f"   • SQL Database Tools: {sql_usage}/{total_examples} examples ({sql_usage/total_examples*100:.1f}%)")
+        summary.append(f"   • Online Search Tools: {search_usage}/{total_examples} examples ({search_usage/total_examples*100:.1f}%)")
+        summary.append(f"   • Memory-dependent queries: {memory_dependent}")
+        summary.append(f"   • Context-setting queries: {context_setters}")
+        if routing_total > 0:
+            summary.append(f"   • Routing accuracy: {routing_accuracy}/{routing_total} ({routing_accuracy/routing_total*100:.1f}%)")
         
         return summary
     
@@ -596,11 +708,24 @@ class TennisAgentsEvaluator:
         if len(analysis["individual_results"]) > 5:
             print(f"   ... and {len(analysis['individual_results']) - 5} more results")
         
-        # Add tool calling analysis
-        print(f"\n🔧 TOOL CALLING ANALYSIS:")
+        # Add LangGraph tool calling and memory analysis
+        print(f"\n🔧 LANGGRAPH SYSTEM ANALYSIS:")
         tool_usage_summary = self._analyze_tool_usage(analysis["individual_results"])
         for tool_stat in tool_usage_summary:
             print(f"   {tool_stat}")
+        
+        # Additional LangGraph-specific metrics
+        langgraph_examples = sum(1 for result in analysis["individual_results"] 
+                               if result.get("additional_metadata", {}).get("langgraph_used", False))
+        print(f"   • LangGraph workflow usage: {langgraph_examples}/{len(analysis['individual_results'])} examples")
+        
+        # Memory system performance
+        memory_dependent = [result for result in analysis["individual_results"] 
+                           if result.get("additional_metadata", {}).get("requires_context", False)]
+        if memory_dependent:
+            memory_success = sum(1 for result in memory_dependent 
+                               if any(score_data["passed"] for score_data in result["scorer_results"].values()))
+            print(f"   • Memory-dependent query success: {memory_success}/{len(memory_dependent)} examples")
         
         print("\n" + "=" * 60)
 
@@ -608,14 +733,20 @@ class TennisAgentsEvaluator:
 def main():
     """Main function to run the tennis agents evaluation."""
     print("🎾 Tennis Intelligence System - Judgeval Evaluation")
+    print("🚀 LangGraph-Based System with Memory Management")
     print("=" * 60)
     
+    # Check for debug mode - default to True for evaluation
+    debug_mode = os.environ.get('TENNIS_DEBUG', 'True').lower() == 'true'
+    if debug_mode:
+        print("🐛 Debug mode enabled - detailed evaluation output will be shown")
+    
     try:
-        # Initialize evaluator
-        evaluator = TennisAgentsEvaluator()
+        # Initialize evaluator with LangGraph system
+        evaluator = TennisAgentsEvaluator(debug=debug_mode)
         
         # Run evaluation
-        project_name = f"tennis_agents_eval_{datetime.now().strftime('%Y%m%d')}"
+        project_name = f"langgraph_tennis_eval_{datetime.now().strftime('%Y%m%d')}"
         results = evaluator.run_evaluation(project_name)
         
         if "error" not in results:
@@ -623,10 +754,24 @@ def main():
             print(f"📊 Results saved to judgeval project: {project_name}")
             
             # Save detailed results to file
-            results_file = f"tennis_eval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            results_file = f"langgraph_tennis_eval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             with open(results_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             print(f"💾 Detailed results saved to: {results_file}")
+            
+            # Print summary of key improvements from LangGraph system
+            print(f"\n🚀 LangGraph System Enhancements Evaluated:")
+            print(f"   • Official tool calling workflow")
+            print(f"   • Session-based memory management")
+            print(f"   • Pronoun resolution capabilities")
+            print(f"   • Clean loading animations")
+            print(f"   • Debug mode toggle")
+            
+            # Check if memory-dependent queries were successful
+            memory_tests = sum(1 for result in results.get("individual_results", []) 
+                             if result.get("query_type") == "memory_dependent")
+            if memory_tests > 0:
+                print(f"   • Memory-dependent queries tested: {memory_tests}")
         else:
             print(f"❌ Evaluation failed: {results['error']}")
             

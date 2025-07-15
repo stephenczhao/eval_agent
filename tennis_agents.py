@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
 
 
@@ -46,7 +46,15 @@ class TennisIntelligenceSystem:
     
     This system uses LangGraph workflows for proper tool execution and tracking,
     enabling comprehensive evaluation with judgeval.
+    
+    Database Constraints:
+    - SQL database contains tennis data from 2023-2025 only
+    - Queries for data outside this range should use online search
     """
+    
+    # Database temporal constraints
+    DATABASE_START_YEAR = 2023
+    DATABASE_END_YEAR = 2025
     
     def __init__(self, debug: bool = False):
         """Initialize the tennis intelligence system with LangGraph orchestrator."""
@@ -62,6 +70,13 @@ class TennisIntelligenceSystem:
         self.config = TennisConfig()
         self.debug = debug
         
+        # Add temporal constraints to config for orchestrator
+        self.config.database_temporal_range = {
+            'start_year': self.DATABASE_START_YEAR,
+            'end_year': self.DATABASE_END_YEAR,
+            'description': f"SQL database contains tennis data from {self.DATABASE_START_YEAR} to {self.DATABASE_END_YEAR} only"
+        }
+        
         # Always use LangGraph orchestrator with built-in memory
         if self.debug:
             print("🚀 Using LangGraph orchestrator with built-in memory and official tool calling")
@@ -70,9 +85,45 @@ class TennisIntelligenceSystem:
         if self.debug:
             print("✅ Tennis Intelligence System initialized successfully")
             print(f"📊 Database: {self.config.database_path}")
+            print(f"📅 Database Range: {self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}")
             print(f"🤖 Model: {self.config.default_model}")
             print(f"🧠 LangGraph Orchestrator with Tool Calling")
     
+    def _extract_query_years(self, query: str) -> List[int]:
+        """
+        Extract years mentioned in the query to help with temporal routing.
+        
+        Args:
+            query: User query string
+            
+        Returns:
+            List of years found in the query
+        """
+        import re
+        # Find 4-digit years in the query (1900-2099)
+        years = re.findall(r'\b(19\d{2}|20\d{2})\b', query)
+        return [int(year) for year in years]
+    
+    def _is_query_outside_database_range(self, query: str) -> bool:
+        """
+        Check if query asks for data outside the database temporal range.
+        
+        Args:
+            query: User query string
+            
+        Returns:
+            True if query is likely asking for data outside 2023-2025 range
+        """
+        years = self._extract_query_years(query)
+        if not years:
+            return False
+        
+        # Check if any mentioned year is outside our database range
+        for year in years:
+            if year < self.DATABASE_START_YEAR or year > self.DATABASE_END_YEAR:
+                return True
+        return False
+
     def process_query(self, user_query: str, session_id: str) -> Dict[str, Any]:
         """
         Process a user query through the LangGraph tennis intelligence system.
@@ -86,13 +137,25 @@ class TennisIntelligenceSystem:
         """
         try:
             start_time = time.time()
+            
+            # Check for temporal constraints
+            outside_db_range = self._is_query_outside_database_range(user_query)
+            query_years = self._extract_query_years(user_query)
+            
+            if self.debug and outside_db_range:
+                print(f"⚠️  Query contains years outside database range ({self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}): {query_years}")
+                print(f"🌐 Routing hint: Should prefer online search for temporal accuracy")
+            
             print(f"\n🚀 LangGraph Processing: '{user_query}'")
             
             # Process through LangGraph workflow
             result = self.orchestrator.process_query(user_query, session_id)
             
-            # Add processing time
+            # Add processing time and temporal analysis
             result['processing_time'] = time.time() - start_time
+            result['query_years'] = query_years
+            result['outside_database_range'] = outside_db_range
+            result['database_temporal_range'] = f"{self.DATABASE_START_YEAR}-{self.DATABASE_END_YEAR}"
             
             # Extract tool calling information (LangGraph tracks this automatically)
             tools_called = []
@@ -103,6 +166,12 @@ class TennisIntelligenceSystem:
             
             result['tools_called'] = tools_called
             result['langgraph_used'] = True
+            
+            # Add routing recommendation based on temporal analysis
+            if outside_db_range and result.get('sql_data_used', False):
+                result['routing_note'] = f"Query asked for data from {query_years} but used SQL database (2023-2025 only)"
+            elif outside_db_range and result.get('search_data_used', False):
+                result['routing_note'] = f"Correctly used online search for data from {query_years} (outside database range)"
             
             return result
                 
@@ -138,6 +207,7 @@ def main():
         if debug_mode:
             print("🐛 Debug mode enabled - showing detailed processing steps")
         print("Ask me anything about tennis - players, matches, rankings, etc.")
+        print(f"📅 Database covers: {TennisIntelligenceSystem.DATABASE_START_YEAR}-{TennisIntelligenceSystem.DATABASE_END_YEAR} (for older/newer data, I'll search online)")
         print("Type 'quit' to exit.\n")
         
         while True:
@@ -167,6 +237,19 @@ def main():
                     print(f"   • Sources: {', '.join(result['sources'])}")
                     print(f"   • Tools Called: {', '.join(result.get('tools_called', []))}")
                     print(f"   • Processing time: {end_time - start_time:.2f}s")
+                    print(f"   • Database Range: {result.get('database_temporal_range', 'Unknown')}")
+                    
+                    # Show temporal analysis if years were detected
+                    if result.get('query_years'):
+                        print(f"   • Query Years: {result['query_years']}")
+                        if result.get('outside_database_range'):
+                            print(f"   • ⚠️  Outside Database Range: Yes")
+                        else:
+                            print(f"   • ✅ Within Database Range: Yes")
+                    
+                    # Show routing notes if any
+                    if result.get('routing_note'):
+                        print(f"   • Routing Note: {result['routing_note']}")
                 
                 print()  # Add spacing
                 
