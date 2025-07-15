@@ -51,109 +51,208 @@ pip install -r requirements.txt
 python tennis_agents.py
 ```
 
-### 5. Run Comprehensive Evaluation
+### 5. Set Up JudgeVal for System Evaluation (Optional but Recommended)
+
+For comprehensive evaluation and debugging, configure JudgeVal:
+
+```bash
+# Set your JudgeVal API credentials (optional - for advanced evaluation)
+export JUDGMENT_API_KEY=your_judgeval_api_key
+export JUDGMENT_ORG_ID=your_judgeval_org_id
+```
+
+### 6. Run Comprehensive Evaluation with JudgeVal
 
 ```bash
 python judgeval_tennis_agents.py
 ```
 
-### 6. Optional: Rebuild Tennis Database
+This evaluation suite provides:
+- **Multi-dimensional Quality Assessment**: Faithfulness, relevancy, hallucination detection
+- **Tool Usage Analysis**: Verification that the right tools are called for each query type
+- **Performance Benchmarking**: Response times, confidence scores, success rates
+- **Automated Debugging**: Identifies issues with reasoning, data retrieval, and response quality
+- **Tennis Domain Expertise Scoring**: Custom evaluation for tennis knowledge accuracy
+
+### 7. Optional: Rebuild Tennis Database
 
 ```bash
 python ./tennis_data/create_sql_db.py
 ```
 
+## JudgeVal Evaluation & Debugging
+
+The tennis agent system includes comprehensive evaluation capabilities using JudgeVal, providing automated quality assessment and debugging tools for agentic AI systems.
+
+### Evaluation Capabilities
+
+The `judgeval_tennis_agents.py` script provides:
+
+**🔍 Quality Assessment Metrics:**
+- **Faithfulness Scorer**: Measures factual accuracy against retrieved sources
+- **Answer Relevancy Scorer**: Evaluates how well responses address the specific query
+- **Answer Correctness Scorer**: Assesses overall correctness of tennis facts and statistics
+- **Instruction Adherence Scorer**: Verifies the agent follows tennis domain guidelines
+- **Tool Usage Analysis**: Validates correct routing between SQL database and web search
+- **Tennis Expertise Scorer**: Custom domain-specific evaluation for tennis knowledge
+
+**🐛 Debugging Features:**
+- **Session Isolation Testing**: Ensures no memory contamination between queries
+- **Tool Routing Verification**: Confirms appropriate tool selection for different query types
+- **Response Confidence Analysis**: Identifies low-confidence responses that need improvement
+- **Error Pattern Detection**: Automatically categorizes and reports system failures
+- **Performance Profiling**: Tracks response times and computational efficiency
+
+### Running Evaluations
+
+**Basic Evaluation:**
+```bash
+python judgeval_tennis_agents.py
+```
+
+**Debug Mode (Detailed Logging):**
+```bash
+export TENNIS_DEBUG=True
+python judgeval_tennis_agents.py
+```
+
+**Sample Evaluation Output:**
+```
+🎾 TENNIS INTELLIGENCE SYSTEM - EVALUATION REPORT
+================================================================================
+
+📊 SUMMARY:
+   • Total Queries: 10
+   • Successful: 9 (90.0%)
+   • Failed: 1 (10.0%)
+   • Average Confidence: 0.87
+   • Average Processing Time: 2.34s
+
+🔧 TOOL USAGE:
+   • query_sql_database: 6 times (60.0%)
+   • online_search: 4 times (40.0%)
+
+🔍 EVALUATION SCORES:
+   • Faithfulness: Average Score: 0.912, Success Rate: 90.0%
+   • Answer Relevancy: Average Score: 0.856, Success Rate: 80.0%
+   • Tennis Expertise: Average Score: 0.923, Success Rate: 90.0%
+```
+
+### Test Case Categories
+
+The evaluation suite includes comprehensive test scenarios:
+
+- **Historical Data Queries**: Tests SQL database retrieval for 2023-2025 tennis data
+- **Current Information Queries**: Validates web search for real-time rankings and news
+- **Player Analysis**: Evaluates statistical analysis and comparison capabilities
+- **Edge Cases**: Tests temporal boundary queries and mixed data source scenarios
+- **Technical Tennis Knowledge**: Assesses domain expertise and rule explanations
+
+### Using Evaluation for Development
+
+**Iterative Development Workflow:**
+1. Implement system changes
+2. Run evaluation suite: `python judgeval_tennis_agents.py`
+3. Analyze performance metrics and identify issues
+4. Fix identified problems (tool routing, prompt optimization, etc.)
+5. Re-evaluate to validate improvements
+
+**Common Issues Detected:**
+- Memory contamination between sessions
+- Incorrect tool routing decisions
+- Low confidence in domain-specific responses
+- Hallucination in historical statistics
+- Poor temporal reasoning for date-based queries
+
 ## Agentic Design Architecture
 
-### Multi-Agent Orchestration
+### LangGraph Workflow Architecture
 
-The system implements a sophisticated multi-agent architecture using LangGraph:
+The system implements a LangGraph StateGraph workflow with conditional routing:
 
 ```mermaid
 graph TD
-    A[User Query] --> B[Query Classification]
-    B --> C{Route Decision}
-    C -->|Historical Data| D[SQL Agent]
-    C -->|Current Info| E[Search Agent]
-    C -->|Memory Context| F[Memory Agent]
-    D --> G[Response Synthesis]
-    E --> G
-    F --> G
-    G --> H[Quality Validation]
-    H --> I[Final Response]
+    A[User Query] --> B[Classifier Node]
+    B --> C{Query Type?}
+    C -->|General| H[Synthesizer Node]
+    C -->|Data Specific| D[Router Node]
+    D --> E{Routing Decision?}
+    E -->|SQL Database| F[SQL Agent Node]
+    E -->|Web Search| G[Search Agent Node]
+    E -->|Both Needed| F
+    F --> I{Need Search Too?}
+    I -->|Yes| G
+    I -->|No| H
+    G --> H
+    H --> J[Final Response]
 ```
 
-#### Core Agents:
+#### Core Workflow Nodes:
 
-1. **Orchestrator Agent** (`src/agents/langgraph_orchestrator.py`)
-   - Manages workflow state and tool coordination
-   - Implements LangGraph state machines for complex reasoning
-   - Handles tool dependency resolution and execution order
+1. **LangGraph Orchestrator** (`src/agents/langgraph_orchestrator.py`)
+   - StateGraph-based workflow management with TennisState
+   - Built-in LangGraph message-based memory (no separate memory agent)
+   - ToolNode integration for proper tool calling patterns
 
-2. **Query Classifier** (`src/utils/context_aware_classifier.py`)
-   - Intelligently routes queries to appropriate data sources
-   - Contextual understanding of tennis domain concepts
-   - Adaptive routing based on query complexity and data requirements
+2. **Classifier Node** (built-in function)
+   - Determines if query is "general" or "data_specific"
+   - Routes general queries directly to synthesizer
+   - Routes data queries to router for tool selection
 
-3. **SQL Database Agent** (`src/tools/sql_tools.py`)
-   - Specialized for historical tennis statistics and player data
-   - Optimized queries for performance and accuracy
-   - Data validation and result formatting
+3. **Router Node** (built-in function)
+   - Analyzes temporal context and query requirements
+   - Routes to SQL for historical data (2023-2025)
+   - Routes to Search for current/recent information
+   - Can chain SQL → Search for comprehensive analysis
 
-4. **Web Search Agent** (`src/tools/search_tools.py`)
-   - Retrieves current rankings, news, and real-time information
-   - Tavily integration for reliable web search results
-   - Content filtering and relevance scoring
+4. **SQL Agent Node** (workflow function)
+   - Uses `query_sql_database` tool via ToolNode
+   - LLM-driven SQL generation with iterative tool calling
+   - Processes tennis database queries and results
 
-5. **Memory Management Agent** (`src/utils/enhanced_memory_manager.py`)
-   - Session-based conversation context
-   - Pronoun resolution and entity tracking
-   - Long-term knowledge retention across conversations
+5. **Search Agent Node** (workflow function)
+   - Uses `online_search` tool via ToolNode
+   - Web search for current rankings and recent tennis news
+   - Tavily integration for reliable search results
 
-### Tool Orchestration Strategy
+6. **Synthesizer Node** (built-in function)
+   - Combines results from SQL and/or Search agents
+   - Creates comprehensive final response
+   - Source attribution and confidence scoring
 
-The system employs a **tool-first** approach where:
+### Tool Integration Strategy
 
-- **Sequential Tool Calling**: Tools are called in dependency order
-- **Context Preservation**: Each tool's output enriches the context for subsequent tools
-- **Fallback Mechanisms**: Graceful degradation when primary tools fail
-- **Quality Validation**: Output verification before response generation
+The system employs LangGraph's **ToolNode** pattern for reliable tool execution:
+
+- **LLM-Driven Tool Calling**: Each agent node uses the LLM to decide when and how to call tools
+- **Iterative Tool Execution**: Agents can make multiple tool calls in sequence until task completion
+- **State-Based Context**: Tool results are preserved in the TennisState for downstream nodes
+- **Error Recovery**: Robust error handling with tool message integration
 
 ### Evaluation Framework
 
-The system includes comprehensive evaluation using JudgeVal with multiple scoring dimensions:
-
-- **Answer Relevancy**: Query-response alignment scoring
-- **Faithfulness**: Adherence to source data accuracy
-- **Answer Correctness**: Factual accuracy verification
-- **Hallucination Detection**: Identification of unsupported claims
-- **Instruction Adherence**: Following tennis domain guidelines
-- **Groundedness**: Response grounding in provided sources
-- **Tool Usage Analysis**: Efficiency and correctness of tool calling patterns
+The system integrates with JudgeVal for automated quality assessment across multiple dimensions. See the **JudgeVal Evaluation & Debugging** section above for comprehensive details on evaluation capabilities, metrics, and debugging workflows.
 
 ## Repository Structure
 
 ```
 eval_agent/
 ├── src/                              # Core system components
-│   ├── agents/                       # LangGraph orchestration agents
-│   │   ├── langgraph_orchestrator.py # Main workflow orchestrator
+│   ├── agents/                       # LangGraph workflow orchestrator
+│   │   ├── langgraph_orchestrator.py # StateGraph workflow with tool calling
 │   │   └── orchestrator.py           # Legacy orchestrator (deprecated)
 │   ├── config/                       # System configuration
 │   │   ├── settings.py               # Environment and API settings
 │   │   └── optimized_prompts.py      # Domain-optimized prompts
-│   ├── models/                       # Data models and schemas
-│   │   └── classifier_models.py      # Query classification models
-│   ├── tools/                        # Agent tools and capabilities
-│   │   ├── sql_tools.py              # Database query tools
-│   │   ├── search_tools.py           # Web search integration
-│   │   └── text_processing_tools.py  # NLP and text analysis
+│   ├── tools/                        # LangGraph tool implementations
+│   │   ├── sql_tools.py              # Complete SQL pipeline (generate → execute → interpret)
+│   │   ├── search_tools.py           # Complete web search pipeline (optimize → search → interpret)
+│   │   └── text_processing_tools.py  # Tennis entity extraction tool
 │   └── utils/                        # Utility functions and helpers
-│       ├── enhanced_memory_manager.py # Advanced memory management
-│       ├── context_aware_classifier.py # Intelligent query routing
-│       └── tavily_search.py          # Search API integration
+│       ├── enhanced_memory_manager.py # Session memory management (LangGraph provides built-in state)
+│       └── tavily_search.py          # Raw Tavily API integration
 ├── tennis_data/                      # Tennis domain data
-│   ├── data/                         # Raw tennis statistics
+│   ├── data/                         # Raw tennis statistics (2023-2025)
 │   │   ├── atp_men/                  # ATP men's tournament data
 │   │   └── wta_women/                # WTA women's tournament data
 │   ├── tennis_matches.db             # Processed tennis database
@@ -166,24 +265,29 @@ eval_agent/
 ### Key Components Explained
 
 **Core System (`tennis_agents.py`)**
-- Main entry point for interactive tennis intelligence system
-- Implements LangGraph-based conversation management
-- Provides clean CLI interface with loading animations
+- Main entry point using `TennisIntelligenceSystem` class
+- Integrates LangGraph orchestrator with session management
+- Provides CLI interface with status indicators and debug mode
 
 **Evaluation Suite (`judgeval_tennis_agents.py`)**
-- Comprehensive quality assessment using JudgeVal
-- Multi-dimensional scoring across relevancy, faithfulness, correctness
-- Automated tool usage analysis and performance metrics
+- Comprehensive `TennisEvaluationSuite` using JudgeVal integration
+- Multi-dimensional scoring: faithfulness, relevancy, tool usage, tennis expertise
+- Automated test case generation and evaluation reporting
 
-**Agent Orchestration (`src/agents/`)**
-- LangGraph state machine implementation
-- Tool calling coordination and dependency management
-- Session-based conversation state management
+**LangGraph Workflow (`src/agents/langgraph_orchestrator.py`)**
+- `LangGraphTennisOrchestrator` with StateGraph implementation
+- Built-in workflow nodes: classifier → router → sql_agent/search_agent → synthesizer
+- ToolNode integration for `query_sql_database`, `online_search`, `extract_key_entities`
 
-**Tennis Data Pipeline (`tennis_data/`)**
-- Curated ATP and WTA tournament databases
-- Optimized schema for tennis-specific queries
-- Historical match results and player statistics
+**Tool Pipeline (`src/tools/`)**
+- **`sql_tools.py`**: Complete SQL workflow (query generation → execution → interpretation)
+- **`search_tools.py`**: Complete web search workflow (query optimization → Tavily search → result interpretation)  
+- **`text_processing_tools.py`**: Tennis entity extraction and analysis
+
+**Tennis Database (`tennis_data/`)**
+- SQLite database with 13,303+ matches from 2023-2025
+- ATP and WTA tournament results, player statistics, rankings
+- Optimized schema for complex tennis queries and analysis
 
 ## Advanced Usage
 

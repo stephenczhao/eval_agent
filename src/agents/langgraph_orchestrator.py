@@ -423,20 +423,20 @@ class LangGraphTennisOrchestrator:
                 self._debug_print(f"   📞 Calling: {tool_name}")
             
             # Execute all tool calls at once (ToolNode processes all tool calls together)
-            try:
+                try:
                 # Execute all tools from this response at once
-                tool_result = self.tool_node.invoke({"messages": [response]})
-                
+                    tool_result = self.tool_node.invoke({"messages": [response]})
+                    
                 # Add all tool messages to conversation
-                if tool_result and "messages" in tool_result:
-                    for tool_message in tool_result["messages"]:
-                        conversation_messages.append(tool_message)
-                        state["messages"].append(tool_message)
-                        
-            except Exception as e:
-                self._debug_print(f"❌ Tool execution failed: {e}")
+                    if tool_result and "messages" in tool_result:
+                        for tool_message in tool_result["messages"]:
+                            conversation_messages.append(tool_message)
+                            state["messages"].append(tool_message)
+                            
+                except Exception as e:
+                    self._debug_print(f"❌ Tool execution failed: {e}")
                 # Create error tool messages for each tool call
-                from langchain_core.messages import ToolMessage
+                    from langchain_core.messages import ToolMessage
                 for tool_call in response.tool_calls:
                     error_message = ToolMessage(
                         content=f"Tool execution failed: {str(e)}",
@@ -487,20 +487,20 @@ class LangGraphTennisOrchestrator:
                 self._debug_print(f"   📞 Calling: {tool_name}")
             
             # Execute all tool calls at once (ToolNode processes all tool calls together)
-            try:
+                try:
                 # Execute all tools from this response at once
-                tool_result = self.tool_node.invoke({"messages": [response]})
-                
+                    tool_result = self.tool_node.invoke({"messages": [response]})
+                    
                 # Add all tool messages to conversation
-                if tool_result and "messages" in tool_result:
-                    for tool_message in tool_result["messages"]:
-                        conversation_messages.append(tool_message)
-                        state["messages"].append(tool_message)
-                        
-            except Exception as e:
-                self._debug_print(f"❌ Tool execution failed: {e}")
+                    if tool_result and "messages" in tool_result:
+                        for tool_message in tool_result["messages"]:
+                            conversation_messages.append(tool_message)
+                            state["messages"].append(tool_message)
+                            
+                except Exception as e:
+                    self._debug_print(f"❌ Tool execution failed: {e}")
                 # Create error tool messages for each tool call
-                from langchain_core.messages import ToolMessage
+                    from langchain_core.messages import ToolMessage
                 for tool_call in response.tool_calls:
                     error_message = ToolMessage(
                         content=f"Tool execution failed: {str(e)}",
@@ -852,7 +852,7 @@ class LangGraphTennisOrchestrator:
             }
         finally:
             # Stop status indicator
-            self._stop_status_indicator()
+            self._stop_status_indicator() 
     
     def _extract_sql_query_from_messages(self, messages: List[BaseMessage]) -> Optional[str]:
         """Extract the SQL query from tool messages for Text2SQL evaluation."""
