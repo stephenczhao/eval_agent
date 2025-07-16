@@ -1,0 +1,182 @@
+{
+  "timestamp": "2025-07-16T16:04:41.069760",
+  "project_name": "tennis_intelligence_eval",
+  "total_queries": 1,
+  "analysis": {
+    "summary": {
+      "total_queries": 1,
+      "successful_queries": 1,
+      "failed_queries": 0,
+      "average_confidence": 0.8,
+      "average_processing_time": 49.317832946777344
+    },
+    "tool_usage": {
+      "online_search": {
+        "count": 1,
+        "percentage": 100.0
+      }
+    },
+    "category_performance": {
+      "unknown": {
+        "total": 1,
+        "successful": 1,
+        "average_confidence": 0.8
+      }
+    },
+    "evaluation_scores": {
+      "Faithfulness": {
+        "average_score": 1.0,
+        "min_score": 1.0,
+        "max_score": 1.0,
+        "success_rate": 1.0,
+        "total_evaluated": 1
+      },
+      "Tennis Expertise": {
+        "average_score": 0.0,
+        "min_score": 0.0,
+        "max_score": 0.0,
+        "success_rate": 0.0,
+        "total_evaluated": 1
+      },
+      "Answer Correctness": {
+        "average_score": 0.25,
+        "min_score": 0.25,
+        "max_score": 0.25,
+        "success_rate": 0.0,
+        "total_evaluated": 1
+      },
+      "Instruction Adherence": {
+        "average_score": 0.0,
+        "min_score": 0.0,
+        "max_score": 0.0,
+        "success_rate": 0.0,
+        "total_evaluated": 1
+      },
+      "Text to SQL": {
+        "average_score": 0.0,
+        "min_score": 0.0,
+        "max_score": 0.0,
+        "success_rate": 0.0,
+        "total_evaluated": 1
+      },
+      "Answer Relevancy": {
+        "average_score": 0.875,
+        "min_score": 0.875,
+        "max_score": 0.875,
+        "success_rate": 1.0,
+        "total_evaluated": 1
+      }
+    },
+    "trace_analysis": {
+      "trace_capture_rate": 0.0,
+      "total_trace_spans": 0,
+      "average_spans_per_query": 0.0,
+      "execution_patterns": {},
+      "trace_enabled": false
+    },
+    "issues_found": [
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Instruction Adherence",
+        "reason": "[Verdict(instruction='Find the current ATP rankings as of today.', analysis='The LLM provided ATP rankings for a future date, July 16, 2025, which cannot be verified as current. The task was not completed because it does not reflect actual current rankings but a hypothetical future scenario.', score=0.0)]",
+        "type": "evaluation_failure"
+      },
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Tool Order",
+        "reason": "",
+        "type": "evaluation_failure"
+      },
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Tool Dependency",
+        "reason": "",
+        "type": "evaluation_failure"
+      },
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Text to SQL",
+        "reason": "The provided response isn't an SQL query, but rather a list of rankings with a narrative description. It does not reference any table or column names from the table schema, and it does not execute a query to filter or return the ATP rankings as requested in the natural language query. Thus, it cannot be considered a valid SQL query for retrieving the current ATP rankings from a database.",
+        "type": "evaluation_failure"
+      },
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Answer Correctness",
+        "reason": "The score is 0.25 because the model's output includes some relevant information about the rankings but lacks crucial details that were in the expected output. Specifically, it fails to mention Jannik Sinner's specific points and current status atop the ATP rankings, and does not cover any WTA ranking information, particularly regarding Aryna Sabalenka and her points. This indicates a partial understanding of the expected content but with significant gaps affecting the score.",
+        "type": "evaluation_failure"
+      },
+      {
+        "query": "What are the current ATP rankings as of today?",
+        "scorer": "Tennis Expertise",
+        "reason": "The response does not accurately reflect current ATP rankings as of the knowledge cut-off date of October 2023. As of the latest available data, Jannik Sinner was not the ATP world number 1, and the perceived rankings presented (e.g., Carlos Alcaraz, Alexander Zverev) do not match the known standings. Additionally, providing a future date for rankings without access to updated sources does not demonstrate current tennis expertise.",
+        "type": "evaluation_failure"
+      }
+    ]
+  },
+  "detailed_results": [
+    {
+      "query": "What are the current ATP rankings as of today?",
+      "response": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nThese rankings reflect the latest standings in men's professional tennis and are sourced from ATP.com and Tennis.com. For more detailed information, you can visit these sites directly.",
+      "confidence": 0.8,
+      "sources": [
+        "Web Search"
+      ],
+      "tools_called": [
+        "online_search"
+      ],
+      "processing_time": 49.317832946777344,
+      "evaluation_scores": {
+        "Faithfulness": {
+          "score": 1.0,
+          "success": true,
+          "reason": "The score is 1.00 because there are no contradictions in the output. Great job maintaining factual consistency with the retrieval context!",
+          "threshold": 0.7
+        },
+        "Answer Relevancy": {
+          "score": 0.875,
+          "success": true,
+          "reason": "The score is 0.88 because the response mostly provided relevant information about the ATP rankings. However, the inclusion of a future date that does not align with the request for 'current' rankings slightly detracts from the relevancy. Despite this, the main content of the answer addressing current ATP rankings was largely accurate, justifying the relatively high score.",
+          "threshold": 0.8
+        },
+        "Instruction Adherence": {
+          "score": 0.0,
+          "success": false,
+          "reason": "[Verdict(instruction='Find the current ATP rankings as of today.', analysis='The LLM provided ATP rankings for a future date, July 16, 2025, which cannot be verified as current. The task was not completed because it does not reflect actual current rankings but a hypothetical future scenario.', score=0.0)]",
+          "threshold": 0.7
+        },
+        "Tool Order": {
+          "score": null,
+          "success": false,
+          "reason": "",
+          "threshold": 0.8
+        },
+        "Tool Dependency": {
+          "score": null,
+          "success": false,
+          "reason": "",
+          "threshold": 0.8
+        },
+        "Text to SQL": {
+          "score": 0.0,
+          "success": false,
+          "reason": "The provided response isn't an SQL query, but rather a list of rankings with a narrative description. It does not reference any table or column names from the table schema, and it does not execute a query to filter or return the ATP rankings as requested in the natural language query. Thus, it cannot be considered a valid SQL query for retrieving the current ATP rankings from a database.",
+          "threshold": 1.0
+        },
+        "Answer Correctness": {
+          "score": 0.25,
+          "success": false,
+          "reason": "The score is 0.25 because the model's output includes some relevant information about the rankings but lacks crucial details that were in the expected output. Specifically, it fails to mention Jannik Sinner's specific points and current status atop the ATP rankings, and does not cover any WTA ranking information, particularly regarding Aryna Sabalenka and her points. This indicates a partial understanding of the expected content but with significant gaps affecting the score.",
+          "threshold": 0.7
+        },
+        "Tennis Expertise": {
+          "score": 0.0,
+          "success": false,
+          "reason": "The response does not accurately reflect current ATP rankings as of the knowledge cut-off date of October 2023. As of the latest available data, Jannik Sinner was not the ATP world number 1, and the perceived rankings presented (e.g., Carlos Alcaraz, Alexander Zverev) do not match the known standings. Additionally, providing a future date for rankings without access to updated sources does not demonstrate current tennis expertise.",
+          "threshold": 0.7
+        }
+      },
+      "success": true,
+      "errors": []
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "timestamp": "2025-07-16T16:00:10.139725",
+  "project_name": "tennis_intelligence_eval",
+  "total_queries": 1,
+  "analysis": {
+    "summary": {
+      "total_queries": 1,
+      "successful_queries": 1,
+      "failed_queries": 0,
+      "average_confidence": 0.8,
+      "average_processing_time": 16.89968705177307
+    },
+    "tool_usage": {
+      "online_search": {
+        "count": 1,
+        "percentage": 100.0
+      }
+    },
+    "category_performance": {
+      "unknown": {
+        "total": 1,
+        "successful": 1,
+        "average_confidence": 0.8
+      }
+    },
+    "evaluation_scores": {},
+    "trace_analysis": {
+      "trace_capture_rate": 0.0,
+      "total_trace_spans": 0,
+      "average_spans_per_query": 0.0,
+      "execution_patterns": {},
+      "trace_enabled": false
+    },
+    "issues_found": []
+  },
+  "detailed_results": [
+    {
+      "query": "What are the current ATP rankings as of today?",
+      "response": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nThese rankings reflect the latest standings in men's professional tennis and are sourced from ATP.com and other reputable sports news outlets.",
+      "confidence": 0.8,
+      "sources": [
+        "Web Search"
+      ],
+      "tools_called": [
+        "online_search"
+      ],
+      "processing_time": 16.89968705177307,
+      "evaluation_scores": {},
+      "success": true,
+      "errors": []
+    }
+  ]
+}

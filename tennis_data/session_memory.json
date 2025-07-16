@@ -86,5 +86,21 @@
       "final_answer": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nFor the latest updates and more detailed information, you can visit the official ATP website or check sports news platforms like ESPN.",
       "timestamp": "2025-07-16T15:38:43.254764"
     }
+  ],
+  "session_86e6854a": [
+    {
+      "conversation_id": 0,
+      "user_query": "What are the current ATP rankings as of today?",
+      "final_answer": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nThese rankings reflect the latest standings in men's professional tennis and are sourced from ATP.com and other reputable sports news outlets.",
+      "timestamp": "2025-07-16T16:00:10.078960"
+    }
+  ],
+  "session_c13022ea": [
+    {
+      "conversation_id": 0,
+      "user_query": "What are the current ATP rankings as of today?",
+      "final_answer": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nThese rankings reflect the latest standings in men's professional tennis and are sourced from ATP.com and Tennis.com. For more detailed information, you can visit these sites directly.",
+      "timestamp": "2025-07-16T16:04:21.987310"
+    }
   ]
 }

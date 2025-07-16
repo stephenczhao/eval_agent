@@ -4,12 +4,6 @@ Tennis Intelligence System Evaluation with JudgeVal
 
 This module integrates JudgeVal evaluation capabilities with the tennis intelligence system
 to provide comprehensive performance monitoring and evaluation.
-
-Features:
-- Automated evaluation of tennis system responses
-- Multiple evaluation metrics (faithfulness, relevancy, hallucination detection, etc.)
-- Test case generation for various tennis query types
-- Performance benchmarking and reporting
 """
 
 import os
@@ -116,7 +110,7 @@ class TennisEvaluationSuite:
             ToolOrderScorer(threshold=0.8),             # Evaluate tool usage order
             ToolDependencyScorer(threshold=0.8),        # Check tool dependencies
             Text2SQLScorer,                             # Evaluate SQL query correctness (for database queries)
-            AnswerCorrectnessScorer,
+            AnswerCorrectnessScorer(threshold=0.7),
             
             # NOTE: Advanced scorers (HallucinationScorer, DerailmentScorer, ExecutionOrderScorer)
             # are available in judgeval >= 0.0.54. Upgrade with: pip install --upgrade judgeval
@@ -457,6 +451,7 @@ Date range: 2023-01-01 to 2025-06-28"""
                 example = Example(
                     input=test_case['query'],
                     actual_output=actual_output_for_sql if context else result['response'],
+                    expected_output=test_case.get('expected_output'),  # Add this line
                     retrieval_context=retrieval_context,
                     context=context,  # For Text2SQL evaluation
                     tools_called=all_tools_called,  # NEW: Enhanced with trace data
@@ -821,27 +816,39 @@ Date range: 2023-01-01 to 2025-06-28"""
 
 def main():
     """Main function to run tennis system evaluation."""
-    print("🎾 Tennis Intelligence System - JudgeVal Evaluation")
+    print("Welcome to JudgeVal Testing Suite - Using a Simple Tennis Agent")
+    print("This is Tennis Agent has the following capabilities:")
+    print("🎾 - General Tennis Expertise")
+    print("🎾 - Online Search Capabilities for tennis related topics")
+    print("🎾 - SQL Database Capabilities for detailed statistical research")
+    print("🎾 - Context Awareness for current and past conversations")
+    print("🎾 - Temporal Context Awareness for current and historical tennis data")
+    print("🎾 - Orchestrating and planning of complex tasks and self-determination of tool usage")
     print("=" * 60)
-    print("✨ Features: LangGraph trace capture and tennis expertise evaluation!")
-    print("   • Trace capture for execution flow analysis")
-    print("   • Tennis expertise classification")  
-    print("   • Faithfulness and relevancy scoring")
-    print("   • Tool usage and dependency validation")
-    print("💡 For advanced scorers, upgrade: pip install --upgrade judgeval")
-    print("=" * 60)
+    print()
     
     # Check for required environment variables
     if not os.getenv('JUDGMENT_API_KEY'):
-        print("❌ JUDGMENT_API_KEY environment variable not set")
-        print("Please set your JudgeVal API key:")
-        print("export JUDGMENT_API_KEY='your-api-key'")
+        print("‼️ JUDGMENT_API_KEY environment variable not set")
+        user_api_key = input("Enter your JudgeVal API key: ").strip()
+        if user_api_key:
+            os.environ['JUDGMENT_API_KEY'] = user_api_key
+            print(f"export JUDGMENT_API_KEY='{user_api_key}'  # (set for this process)")
+        else:
+            print("❌ No API key entered. Exiting.")
+            return
+        
         return
     
     if not os.getenv('JUDGMENT_ORG_ID'):
-        print("❌ JUDGMENT_ORG_ID environment variable not set")
-        print("Please set your JudgeVal organization ID:")
-        print("export JUDGMENT_ORG_ID='your-org-id'")
+        print("‼️ JUDGMENT_ORG_ID environment variable not set")
+        user_org_id = input("Enter your JudgeVal organization ID: ").strip()
+        if user_org_id:
+            os.environ['JUDGMENT_ORG_ID'] = user_org_id
+            print(f"export JUDGMENT_ORG_ID='{user_org_id}'  # (set for this process)")
+        else:
+            print("❌ No organization ID entered. Exiting.")
+            return
         return
     
     # Initialize evaluation suite
