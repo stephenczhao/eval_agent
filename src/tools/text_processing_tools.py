@@ -6,17 +6,17 @@ Text analysis and processing tools for entity extraction to support the tennis i
 """
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from langchain_core.tools import tool
 
 try:
     from src.config.settings import TennisConfig
 except ImportError:
-    from config.settings import TennisConfig
+    from ..config.settings import TennisConfig
 
 
 @tool
-def extract_key_entities(text: str, entity_types: List[str] = None) -> Dict[str, Any]:
+def extract_key_entities(text: str, entity_types: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Extract tennis-related entities from text using pattern matching.
     

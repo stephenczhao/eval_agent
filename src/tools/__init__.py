@@ -9,6 +9,7 @@ This package contains all the tools and utilities used by the agents:
 """
 
 from .sql_tools import (
+    query_sql_database,
     execute_sql_query,
     generate_sql_query,
     interpret_sql_results
@@ -26,6 +27,7 @@ from .text_processing_tools import (
 
 __all__ = [
     # SQL Tools
+    "query_sql_database",
     "execute_sql_query",
     "generate_sql_query",
     "interpret_sql_results",

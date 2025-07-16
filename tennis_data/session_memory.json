@@ -1,0 +1,90 @@
+{
+  "session_b3b0fcbc": [
+    {
+      "conversation_id": 0,
+      "user_query": "how many games did sabalenka play in 2024?",
+      "final_answer": "In 2024, Aryna Sabalenka played a total of 71 games, according to the tennis database. If you have any further questions about her performance, statistics, or other players, feel free to ask!",
+      "timestamp": "2025-07-16T15:13:15.265556"
+    },
+    {
+      "conversation_id": 1,
+      "user_query": "what was her win ratio?",
+      "final_answer": "In 2024, Aryna Sabalenka played a total of 71 games. However, there is currently no available data regarding her win ratio for that year in the tennis database. This absence of information may indicate that specific statistics for her wins and losses have not been recorded or updated. If you have any other questions about her performance or statistics, feel free to ask!",
+      "timestamp": "2025-07-16T15:13:34.619217"
+    }
+  ],
+  "session_73fa458c": [
+    {
+      "conversation_id": 0,
+      "user_query": "how many games did sabalenka win in 2024?",
+      "final_answer": "In 2024, Aryna Sabalenka won a total of 57 games, according to the tennis database. If you have any further questions about her performance or would like to know more about other players, feel free to ask!",
+      "timestamp": "2025-07-16T15:19:01.220124"
+    },
+    {
+      "conversation_id": 1,
+      "user_query": "what was her win ratio in the year before?",
+      "final_answer": "In 2023, Aryna Sabalenka achieved an impressive win ratio of 0.8, meaning she won 80% of her matches. This strong performance underscores her competitiveness on the court. In 2024, she continued her success by winning a total of 57 games. If you have any further questions about her performance or other players, feel free to ask!",
+      "timestamp": "2025-07-16T15:19:25.362676"
+    }
+  ],
+  "session_ed7f8711": [
+    {
+      "conversation_id": 0,
+      "user_query": "how many games did djokovic win last year?",
+      "final_answer": "In 2022, Novak Djokovic won a total of 0 games according to the tennis database results. This figure appears unusual considering his status as one of the top players in the world. It's advisable to verify the data or context surrounding this result, as it may not accurately reflect his performance throughout the year. If you have further questions or need additional information, feel free to ask!",
+      "timestamp": "2025-07-16T15:23:01.249310"
+    }
+  ],
+  "session_93eac197": [
+    {
+      "conversation_id": 0,
+      "user_query": "what's sabalenka's win ratio last year?",
+      "final_answer": "In 2024, Aryna Sabalenka achieved an impressive win ratio of approximately 80.3%. This indicates that she won about 80 out of every 100 matches she played throughout the year. This data reflects her strong performance on the court and is sourced from a reliable tennis database.",
+      "timestamp": "2025-07-16T15:28:29.655314"
+    },
+    {
+      "conversation_id": 1,
+      "user_query": "what about 2022?",
+      "final_answer": "Unfortunately, there is no available data on Aryna Sabalenka's win ratio for the year 2022 in the tennis database, as the specific figure wasn't recorded or is not accessible. However, in 2024, she achieved an impressive win ratio of approximately 80.3%, winning about 80 out of every 100 matches she played. If you have any further questions about her performance or statistics, feel free to ask!",
+      "timestamp": "2025-07-16T15:28:51.362939"
+    }
+  ],
+  "session_ddadf3ff": [
+    {
+      "conversation_id": 0,
+      "user_query": "how many games did sabalenka win in 2024?",
+      "final_answer": "In 2024, Aryna Sabalenka won a total of 57 games, according to the tennis database. If you have any further questions about her performance or other players, feel free to ask!",
+      "timestamp": "2025-07-16T15:31:37.150248"
+    },
+    {
+      "conversation_id": 1,
+      "user_query": "what about 2022?",
+      "final_answer": "In 2022, Aryna Sabalenka had a strong performance, reaching the semifinals of the Australian Open and advancing to the final of Wimbledon, which was her first Grand Slam final appearance. She concluded the year with a record of 41 wins and 17 losses, showcasing her competitive edge on the WTA tour.",
+      "timestamp": "2025-07-16T15:31:57.219264"
+    }
+  ],
+  "session_06d50f7e": [
+    {
+      "conversation_id": 0,
+      "user_query": "What are the current ATP rankings as of today?",
+      "final_answer": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nThese rankings reflect the latest standings in men's professional tennis, with Sinner currently holding the top position. For more detailed information, you can refer to sources like ATP.com and Tennis.com.",
+      "timestamp": "2025-07-16T15:33:17.061915"
+    }
+  ],
+  "session_22d37862": [
+    {
+      "conversation_id": 0,
+      "user_query": "What are the current ATP rankings as of today?",
+      "final_answer": "As of July 16, 2025, the ATP rankings are led by Jannik Sinner, who holds the top position with 12,030 points. Carlos Alcaraz follows in second place. This ranking reflects the latest standings in men's professional tennis, showcasing the current leaders in the sport. For more detailed information, you can refer to official ATP sources or sports news websites.",
+      "timestamp": "2025-07-16T15:37:29.625683"
+    }
+  ],
+  "session_9604b179": [
+    {
+      "conversation_id": 0,
+      "user_query": "What are the current ATP rankings as of today?",
+      "final_answer": "As of July 16, 2025, the ATP rankings are as follows:\n\n1. **Jannik Sinner**\n2. **Carlos Alcaraz**\n3. **Alexander Zverev**\n\nFor the latest updates and more detailed information, you can visit the official ATP website or check sports news platforms like ESPN.",
+      "timestamp": "2025-07-16T15:38:43.254764"
+    }
+  ]
+}

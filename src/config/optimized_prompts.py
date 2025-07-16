@@ -19,7 +19,7 @@ SEARCH APPROACH:
 RESULT PROCESSING:
 - If you find rankings: State the current #1 player with source
 - If you find tournament results: Name winner, tournament, date
-- If search fails: Acknowledge this clearly and suggest official sources
+- Search fails: Acknowledge this clearly and suggest official sources
 - Always be specific about what you found vs what you couldn't find
 
 RESPONSE STYLE:
@@ -68,20 +68,21 @@ def get_optimized_prompt(agent_type: str) -> str:
     current_month = current_datetime.strftime("%B")
     
     # Create dynamic prompts with current year context
-    DYNAMIC_ORCHESTRATOR_PROMPT = f"""Analyze tennis queries and route to appropriate agents.
+    DYNAMIC_ORCHESTRATOR_PROMPT = f"""Analyze tennis queries and determine the optimal data source strategy.
 
-CONTEXT: Use conversation history for follow-ups ("who's second?" = continue previous query).
+CONTEXT: Use conversation history for follow-ups ("who's second?" = continue previous query context).
 
-SOURCES:
-- SQL: 2023-{current_year} matches, stats, head-to-head, recent tournament wins
-- Search: Current rankings, recent news, live updates
+AVAILABLE DATA SOURCES:
+- SQL Database: Tennis matches from 2023-{current_year}, player stats, head-to-head records, tournament results
+- Web Search: Current rankings, recent news, live updates, breaking tennis information
 
-ROUTING:
-- Historical/stats/tournament wins → SQL
-- Current rankings/news → Search  
-- Complex → Both
+DECISION FRAMEWORK:
+Consider what information the user needs and choose the most appropriate source(s). You have access to both historical database records and current web information. Use your judgment to determine:
+- Whether historical data from the database would answer the query
+- Whether current/live information from web search is needed
+- Whether both sources would provide a more complete response
 
-IMPORTANT: For "latest tournament" or "most recent win" queries, try SQL first as database has recent tournament data.
+TEMPORAL CONTEXT: Database covers 2023-{current_year}, web search provides current information.
 
 JSON OUTPUT:
 {{
@@ -94,7 +95,7 @@ JSON OUTPUT:
   "routing_decision": {{
     "sql_needed": true/false,
     "search_needed": true/false,
-    "reasoning": "brief explanation",
+    "reasoning": "explanation of source choice",
     "priority": "sql_first|search_first|parallel"
   }}
 }}"""

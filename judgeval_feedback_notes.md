@@ -17,5 +17,10 @@
 ![screenshot2](./images/feedback_imgs/oneline_evaluations_404.png)
 
 
-# SDK Improvements: 
+
+## InstructionAdherenceScorer subject to date complications
+
+![screenshot3](./images/judge_outdated.png)
+
+potential fix: prompt this scorer to disregard its own training cut-off date; inject system datetime into the prompt for context awareness
 

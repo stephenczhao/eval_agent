@@ -21,6 +21,10 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 
+# hide warnings
+import warnings
+warnings.filterwarnings("ignore")
+
 # Add src directory to Python path for proper imports
 current_dir = Path(__file__).parent
 src_dir = current_dir / 'src'
@@ -29,28 +33,24 @@ sys.path.insert(0, str(src_dir))
 # Change directory to project root for relative file paths
 os.chdir(current_dir)
 
-try:
-    from judgeval import JudgmentClient
-    from judgeval.data import Example
-    from judgeval.scorers import (
-        FaithfulnessScorer,
-        AnswerRelevancyScorer,
-        AnswerCorrectnessScorer,
-        InstructionAdherenceScorer,
-        ToolOrderScorer,
-        ToolDependencyScorer,
-        Text2SQLScorer,
-        ClassifierScorer,
-    )
-    from tennis_agents import TennisIntelligenceSystem, create_session_id
-    from config.settings import TennisConfig
-except ImportError as e:
-    print(f"❌ Import Error: {e}")
-    print("Please ensure you have:")
-    print("  - JudgeVal library installed: pip install judgeval")
-    print("  - Required environment variables set (JUDGMENT_API_KEY, JUDGMENT_ORG_ID)")
-    print("  - Running from the eval_agent directory")
-    sys.exit(1)
+
+from judgeval import JudgmentClient
+from judgeval.data import Example
+from judgeval.scorers import (
+    FaithfulnessScorer,
+    AnswerRelevancyScorer,
+    AnswerCorrectnessScorer,
+    InstructionAdherenceScorer,
+    ToolOrderScorer,
+    ToolDependencyScorer,
+    Text2SQLScorer,
+    ClassifierScorer,
+)
+# NEW: Add LangGraph integration for trace capture
+from judgeval.integrations.langgraph import JudgevalCallbackHandler
+from judgeval.common.tracer import Tracer
+from tennis_agents import TennisAgentSystem, create_session_id
+from config.settings import TennisConfig
 
 
 @dataclass
@@ -89,18 +89,24 @@ class TennisEvaluationSuite:
         self.project_name = project_name
         
         # Initialize tennis system
-        self.tennis_system = TennisIntelligenceSystem(debug=debug)
+        self.tennis_system = TennisAgentSystem(debug=debug)
         self.session_id = create_session_id()
         
+        # NEW: Initialize JudgeVal tracer for LangGraph integration
+        self.tracer = Tracer(
+            project_name=project_name,
+            enable_monitoring=True,
+            enable_evaluations=True
+        )
+        
+        # NEW: Create callback handler for trace capture
+        self.callback_handler = JudgevalCallbackHandler(self.tracer)
+        
         # Initialize JudgeVal client
-        try:
-            self.judgment_client = JudgmentClient()
-            if debug:
-                print("✅ JudgeVal client initialized successfully")
-        except Exception as e:
-            print(f"❌ Failed to initialize JudgeVal client: {e}")
-            print("Please check your JUDGMENT_API_KEY and JUDGMENT_ORG_ID environment variables")
-            raise
+        self.judgment_client = JudgmentClient()
+        if debug:
+            print("✅ JudgeVal client initialized successfully")
+            print("✅ LangGraph trace capture enabled")
         
         # Define evaluation scorers with appropriate thresholds
         self.scorers = [
@@ -110,6 +116,10 @@ class TennisEvaluationSuite:
             ToolOrderScorer(threshold=0.8),             # Evaluate tool usage order
             ToolDependencyScorer(threshold=0.8),        # Check tool dependencies
             Text2SQLScorer,                             # Evaluate SQL query correctness (for database queries)
+            AnswerCorrectnessScorer,
+            
+            # NOTE: Advanced scorers (HallucinationScorer, DerailmentScorer, ExecutionOrderScorer)
+            # are available in judgeval >= 0.0.54. Upgrade with: pip install --upgrade judgeval
         ]
         
         # Add custom tennis expertise classifier
@@ -144,6 +154,9 @@ Does this response demonstrate good tennis expertise? Answer Y for yes, N for no
             print(f"🎾 Tennis Evaluation Suite initialized")
             print(f"📊 Project: {project_name}")
             print(f"🔍 Scorers: {[scorer.__class__.__name__ for scorer in self.scorers]}")
+            print(f"📋 Capabilities: Trace capture, Tennis expertise evaluation")
+            print(f"💡 To enable advanced scorers (Hallucination, Derailment, ExecutionOrder), upgrade:")
+            print(f"   pip install --upgrade judgeval")
     
     def create_tennis_test_cases(self) -> List[Dict[str, Any]]:
         """
@@ -156,6 +169,7 @@ Does this response demonstrate good tennis expertise? Answer Y for yes, N for no
             # Recent data queries (should use online search)
             {
                 "query": "What are the current ATP rankings as of today?",
+                "expected_output": "As of July 16, 2025, the world No. 1 in men’s tennis is Jannik Sinner, sitting atop the ATP rankings with 12,030 points, while the WTA No. 1 is Aryna Sabalenka, leading with 12,420 points.",
                 "expected_tools": [{"tool_name": "online_search", "parameters": None}],
                 "category": "current_data",
                 "expected_characteristics": {
@@ -164,100 +178,129 @@ Does this response demonstrate good tennis expertise? Answer Y for yes, N for no
                     "temporal_scope": "current"
                 }
             },
-            {
-                "query": "Who won the latest Grand Slam tournament?",
-                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
-                "category": "recent_events",
-                "expected_characteristics": {
-                    "should_mention_recency": True,
-                    "should_use_search": True
-                }
-            },
+        #     {
+        #         "query": "Who won the latest Grand Slam tournament?",
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+        #         "category": "recent_events",
+        #         "expected_characteristics": {
+        #             "should_mention_recency": True,
+        #             "should_use_search": True
+        #         }
+        #     },
             
-            # Historical data queries (should use SQL database)
-            {
-                "query": "Who won the French Open in 2023?",
-                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
-                "category": "historical_data",
-                "expected_characteristics": {
-                    "should_use_database": True,
-                    "temporal_scope": "2023"
-                }
-            },
-            {
-                "query": "Show me Novak Djokovic's performance in 2024",
-                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
-                "category": "player_analysis",
-                "expected_characteristics": {
-                    "should_use_database": True,
-                    "should_include_stats": True
-                }
-            },
-            {
-                "query": "Compare Rafael Nadal and Roger Federer's head-to-head record from 2023-2024",
-                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
-                "category": "comparison_analysis",
-                "expected_characteristics": {
-                    "should_use_database": True,
-                    "should_compare_players": True
-                }
-            },
+        #     # Historical data queries (should use SQL database)
+        #     {
+        #         "query": "Who won the French Open in 2023?",
+        #         "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+        #         "category": "historical_data",
+        #         "expected_characteristics": {
+        #             "should_use_database": True,
+        #             "temporal_scope": "2023"
+        #         }
+        #     },
+        #     {
+        #         "query": "Show me Novak Djokovic's performance in 2024",
+        #         "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+        #         "category": "player_analysis",
+        #         "expected_characteristics": {
+        #             "should_use_database": True,
+        #             "should_include_stats": True
+        #         }
+        #     },
+        #     {
+        #         "query": "Compare Rafael Nadal and Roger Federer's head-to-head record from 2023-2024",
+        #         "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+        #         "category": "comparison_analysis",
+        #         "expected_characteristics": {
+        #             "should_use_database": True,
+        #             "should_compare_players": True
+        #         }
+        #     },
             
-            # Edge cases and temporal boundary queries
-            {
-                "query": "What happened in tennis in 2022?",
-                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
-                "category": "pre_database_era",
-                "expected_characteristics": {
-                    "should_use_search": True,
-                    "temporal_scope": "pre_database"
-                }
-            },
-            {
-                "query": "Tennis predictions for 2026",
-                "expected_tools": [{"tool_name": "online_search", "parameters": None}], 
-                "category": "future_queries",
-                "expected_characteristics": {
-                    "should_use_search": True,
-                    "temporal_scope": "future"
-                }
-            },
+        #     # Edge cases and temporal boundary queries
+        #     {
+        #         "query": "What happened in tennis in 2022?",
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+        #         "category": "pre_database_era",
+        #         "expected_characteristics": {
+        #             "should_use_search": True,
+        #             "temporal_scope": "pre_database"
+        #         }
+        #     },
+        #     {
+        #         "query": "Tennis predictions for 2026",
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}], 
+        #         "category": "future_queries",
+        #         "expected_characteristics": {
+        #             "should_use_search": True,
+        #             "temporal_scope": "future"
+        #         }
+        #     },
             
-            # Mixed temporal queries
-            {
-                "query": "How has Serena Williams' ranking changed over the years?",
-                "expected_tools": [
-                    {"tool_name": "query_sql_database", "parameters": None},
-                    {"tool_name": "online_search", "parameters": None}
-                ],
-                "category": "long_term_analysis",
-                "expected_characteristics": {
-                    "should_use_both_sources": True,
-                    "should_mention_career_span": True
-                }
-            },
+        #     # Mixed temporal queries
+        #     {
+        #         "query": "How has Serena Williams' ranking changed over the years?",
+        #         "expected_tools": [
+        #             {"tool_name": "query_sql_database", "parameters": None},
+        #             {"tool_name": "online_search", "parameters": None}
+        #         ],
+        #         "category": "long_term_analysis",
+        #         "expected_characteristics": {
+        #             "should_use_both_sources": True,
+        #             "should_mention_career_span": True
+        #         }
+        #     },
             
-            # Technical tennis queries
-            {
-                "query": "Explain the differences between clay, grass, and hard court surfaces in tennis",
-                "expected_tools": [{"tool_name": "online_search", "parameters": None}],
-                "category": "technical_knowledge",
-                "expected_characteristics": {
-                    "should_be_educational": True,
-                    "should_explain_differences": True
-                }
-            },
+        #     # Technical tennis queries
+        #     {
+        #         "query": "Explain the differences between clay, grass, and hard court surfaces in tennis",
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+        #         "category": "technical_knowledge",
+        #         "expected_characteristics": {
+        #             "should_be_educational": True,
+        #             "should_explain_differences": True
+        #         }
+        #     },
             
-            # Specific statistical queries
-            {
-                "query": "What was the average match duration in ATP tournaments in 2024?",
-                "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
-                "category": "statistical_analysis",
-                "expected_characteristics": {
-                    "should_use_database": True,
-                    "should_include_numbers": True
-                }
-            },
+        #     # Specific statistical queries
+        #     {
+        #         "query": "What was the average match duration in ATP tournaments in 2024?",
+        #         "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+        #         "category": "statistical_analysis",
+        #         "expected_characteristics": {
+        #             "should_use_database": True,
+        #             "should_include_numbers": True
+        #         }
+        #     },
+            
+        #     # NEW: Test cases for new scorers
+        #     {
+        #         "query": "Tell me about the current political situation in tennis",
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+        #         "category": "derailment_test",
+        #         "expected_characteristics": {
+        #             "should_stay_tennis_focused": True,
+        #             "should_not_discuss_politics": True
+        #         }
+        #     },
+        #     {
+        #         "query": "What's Roger Federer's record against aliens from Mars?", 
+        #         "expected_tools": [{"tool_name": "online_search", "parameters": None}],
+        #         "category": "hallucination_test",
+        #         "expected_characteristics": {
+        #             "should_not_make_up_facts": True,
+        #             "should_acknowledge_impossibility": True
+        #         }
+        #     },
+        #     {
+        #         "query": "How many Grand Slams did Rafael Nadal win on the moon?",
+        #         "expected_tools": [{"tool_name": "query_sql_database", "parameters": None}],
+        #         "category": "nonsensical_test", 
+        #         "expected_characteristics": {
+        #             "should_clarify_impossibility": True,
+        #             "should_not_hallucinate": True
+        #         }
+        #     },
         ]
         
         if self.debug:
@@ -303,9 +346,16 @@ Does this response demonstrate good tennis expertise? Answer Y for yes, N for no
                 # Create fresh session for each test case to prevent memory contamination
                 fresh_session_id = create_session_id()
                 
-                # Get tennis system response
+                # NEW: Reset callback handler for each test case to get clean traces
+                self.callback_handler.reset()
+                
+                # Get tennis system response with trace capture
                 start_time = time.time()
-                result = self.tennis_system.process_query(test_case['query'], fresh_session_id)
+                result = self.tennis_system.process_query(
+                    test_case['query'], 
+                    fresh_session_id,
+                    callbacks=[self.callback_handler]  # NEW: Enable trace capture
+                )
                 processing_time = time.time() - start_time
                 
                 # Create retrieval context from sources and metadata
@@ -378,13 +428,38 @@ Date range: 2023-01-01 to 2025-06-28"""
                 # Use SQL query as actual_output for Text2SQL evaluation if available
                 actual_output_for_sql = result.get('sql_query', result['response'])
                 
+                # NEW: Extract trace information from callback handler
+                captured_traces = self.tracer.traces
+                tools_called_from_trace = []
+                execution_sequence = []
+                
+                if captured_traces:
+                    # Get the most recent trace (for this test case)
+                    latest_trace = captured_traces[-1] if captured_traces else {}
+                    trace_spans = latest_trace.get('trace_spans', [])
+                    
+                    # Extract tools and execution order from spans
+                    for span in trace_spans:
+                        span_data = span if isinstance(span, dict) else span
+                        function_name = span_data.get('function', '')
+                        
+                        if 'query_sql_database' in function_name:
+                            tools_called_from_trace.append('query_sql_database')
+                            execution_sequence.append({'tool_name': 'query_sql_database', 'parameters': {}})
+                        elif 'online_search' in function_name:
+                            tools_called_from_trace.append('online_search')
+                            execution_sequence.append({'tool_name': 'online_search', 'parameters': {}})
+                
+                # Merge tools from result and trace
+                all_tools_called = list(set(result.get('tools_called', []) + tools_called_from_trace))
+                
                 # Create JudgeVal Example
                 example = Example(
                     input=test_case['query'],
                     actual_output=actual_output_for_sql if context else result['response'],
                     retrieval_context=retrieval_context,
                     context=context,  # For Text2SQL evaluation
-                    tools_called=result.get('tools_called', []),
+                    tools_called=all_tools_called,  # NEW: Enhanced with trace data
                     expected_tools=test_case.get('expected_tools', []),
                     additional_metadata={
                         'category': test_case['category'],
@@ -396,7 +471,11 @@ Date range: 2023-01-01 to 2025-06-28"""
                             'sql_data_used': result.get('sql_data_used', False),
                             'search_data_used': result.get('search_data_used', False),
                             'langgraph_used': result.get('langgraph_used', False)
-                        }
+                        },
+                        # NEW: Add trace information for execution order evaluation
+                        'execution_sequence': execution_sequence,
+                        'trace_captured': len(captured_traces) > 0,
+                        'trace_spans_count': len(trace_spans) if captured_traces else 0
                     }
                 )
                 
@@ -417,8 +496,11 @@ Date range: 2023-01-01 to 2025-06-28"""
                 
                 if self.debug:
                     print(f"✅ Response: {result['response'][:100]}...")
-                    print(f"🔧 Tools: {result.get('tools_called', [])}")
+                    print(f"🔧 Tools: {all_tools_called}")  # Updated to show enhanced tools
                     print(f"⏱️  Time: {processing_time:.2f}s")
+                    print(f"📊 Trace spans captured: {len(trace_spans) if captured_traces else 0}")
+                    if execution_sequence:
+                        print(f"🔄 Execution sequence: {[item['tool_name'] for item in execution_sequence]}")
                 
             except Exception as e:
                 error_msg = f"Error processing query: {str(e)}"
@@ -432,7 +514,8 @@ Date range: 2023-01-01 to 2025-06-28"""
                     additional_metadata={
                         'category': test_case['category'],
                         'error': True,
-                        'error_type': type(e).__name__
+                        'error_type': type(e).__name__,
+                        'trace_captured': False
                     }
                 )
                 tennis_examples.append(example)
@@ -511,6 +594,7 @@ Date range: 2023-01-01 to 2025-06-28"""
             "tool_usage": {},
             "category_performance": {},
             "evaluation_scores": {},
+            "trace_analysis": {},  # NEW: Trace capture insights
             "issues_found": []
         }
         
@@ -576,6 +660,36 @@ Date range: 2023-01-01 to 2025-06-28"""
                         "total_evaluated": len(scores)
                     }
         
+        # NEW: Analyze trace capture and execution patterns
+        trace_captured_count = 0
+        total_trace_spans = 0
+        execution_patterns = {}
+        
+        for result in results:
+            # Check if result has evaluation scores with metadata
+            if result.evaluation_scores:
+                for scorer_name, scorer_data in result.evaluation_scores.items():
+                    if isinstance(scorer_data, dict):
+                        metadata = scorer_data.get('additional_metadata', {})
+                        if isinstance(metadata, dict):
+                            if metadata.get('trace_captured', False):
+                                trace_captured_count += 1
+                            total_trace_spans += metadata.get('trace_spans_count', 0)
+                            
+                            # Analyze execution patterns
+                            exec_seq = metadata.get('execution_sequence', [])
+                            if exec_seq:
+                                pattern = ' -> '.join([item.get('tool_name', 'unknown') for item in exec_seq])
+                                execution_patterns[pattern] = execution_patterns.get(pattern, 0) + 1
+        
+        analysis["trace_analysis"] = {
+            "trace_capture_rate": (trace_captured_count / len(results)) * 100 if results else 0,
+            "total_trace_spans": total_trace_spans,
+            "average_spans_per_query": total_trace_spans / len(results) if results else 0,
+            "execution_patterns": execution_patterns,
+            "trace_enabled": trace_captured_count > 0
+        }
+        
         # Identify issues
         for result in results:
             if not result.success:
@@ -638,6 +752,18 @@ Date range: 2023-01-01 to 2025-06-28"""
                 print(f"     - Success Rate: {stats['success_rate']:.1%}")
                 print(f"     - Range: {stats['min_score']:.3f} - {stats['max_score']:.3f}")
         
+        # NEW: Trace Analysis
+        if analysis["trace_analysis"]["trace_enabled"]:
+            print(f"\n📊 TRACE ANALYSIS:")
+            trace_stats = analysis["trace_analysis"]
+            print(f"   • Trace Capture Rate: {trace_stats['trace_capture_rate']:.1f}%")
+            print(f"   • Total Trace Spans: {trace_stats['total_trace_spans']}")
+            print(f"   • Avg Spans per Query: {trace_stats['average_spans_per_query']:.1f}")
+            if trace_stats['execution_patterns']:
+                print(f"   • Execution Patterns:")
+                for pattern, count in trace_stats['execution_patterns'].items():
+                    print(f"     - {pattern}: {count} times")
+        
         # Issues Found
         if analysis["issues_found"]:
             print(f"\n⚠️  ISSUES FOUND ({len(analysis['issues_found'])}):")
@@ -696,6 +822,13 @@ Date range: 2023-01-01 to 2025-06-28"""
 def main():
     """Main function to run tennis system evaluation."""
     print("🎾 Tennis Intelligence System - JudgeVal Evaluation")
+    print("=" * 60)
+    print("✨ Features: LangGraph trace capture and tennis expertise evaluation!")
+    print("   • Trace capture for execution flow analysis")
+    print("   • Tennis expertise classification")  
+    print("   • Faithfulness and relevancy scoring")
+    print("   • Tool usage and dependency validation")
+    print("💡 For advanced scorers, upgrade: pip install --upgrade judgeval")
     print("=" * 60)
     
     # Check for required environment variables

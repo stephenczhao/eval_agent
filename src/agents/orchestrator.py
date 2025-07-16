@@ -22,10 +22,10 @@ try:
     from src.utils.memory_manager import MemoryManager
 except ImportError:
     # Fallback for different import contexts
-    from config.settings import TennisConfig
-    from config.optimized_prompts import get_optimized_prompt
-    from tools.text_processing_tools import extract_key_entities
-    from utils.memory_manager import MemoryManager
+    from ..config.settings import TennisConfig
+    from ..config.optimized_prompts import get_optimized_prompt
+    from ..tools.text_processing_tools import extract_key_entities
+    from ..utils.memory_manager import MemoryManager
 
 
 class OrchestratorAgent:
@@ -159,7 +159,7 @@ class OrchestratorAgent:
             if key not in analysis:
                 analysis[key] = {}
         
-        # Validate query_analysis
+        # Validate query_analysis with minimal fallbacks
         query_defaults = {
             "intent": "unknown",
             "tennis_entities": [],
@@ -172,17 +172,22 @@ class OrchestratorAgent:
             if key not in analysis["query_analysis"]:
                 analysis["query_analysis"][key] = default_value
         
-        # Validate routing_decision
+        # Validate routing_decision with neutral fallbacks that don't bias toward any source
         routing_defaults = {
             "sql_needed": False,
-            "search_needed": True,
-            "reasoning": "Default routing decision",
-            "priority": "search_first",
+            "search_needed": False,
+            "reasoning": "LLM analysis required for routing decision",
+            "priority": "parallel",
             "estimated_confidence": 0.5
         }
         for key, default_value in routing_defaults.items():
             if key not in analysis["routing_decision"]:
                 analysis["routing_decision"][key] = default_value
+        
+        # If neither source was selected, default to letting LLM choose
+        if not analysis["routing_decision"]["sql_needed"] and not analysis["routing_decision"]["search_needed"]:
+            analysis["routing_decision"]["search_needed"] = True
+            analysis["routing_decision"]["reasoning"] = "Defaulted to search when no source was selected"
         
         # Validate context_analysis
         context_defaults = {
@@ -331,28 +336,31 @@ IMPORTANT: If the current query seems incomplete or refers to previous context (
             entities_summary = f"\nEXTRACTED ENTITIES: {', '.join(tennis_entities)}\n"
         
         prompt = f"""
-        ANALYZE THIS TENNIS QUERY FOR ROUTING DECISIONS:
+        ANALYZE THIS TENNIS QUERY FOR DATA SOURCE SELECTION:
         
         CURRENT CONTEXT:
         - Today's date: {current_date_str}
         - Current year: {current_year}
         - Current period: {current_month}
         
-        DATABASE COVERAGE: 2023-2025 tennis matches (historical data through {current_year})
-        WEB SEARCH: Current rankings, recent news, live tournaments
+        AVAILABLE DATA SOURCES:
+        - SQL Database: Tennis matches from 2023-{current_year}, comprehensive historical data, player stats, tournament results
+        - Web Search: Current rankings, recent news, live tournaments, breaking tennis information
         {context_summary}
         
         USER QUERY: "{user_query}"
         {entities_summary}
         
-        Based on this query and conversation context, determine routing strategy:
+        ANALYSIS TASK:
+        Consider what information the user is seeking and determine which data source(s) would best answer their query. You have access to both historical database records and current web information.
         
-        ROUTING STRATEGY:
-        - If this appears to be a follow-up question (like "who's the second?" after asking about rankings), consider the PREVIOUS CONTEXT to understand what data source is needed
-        - Questions about {current_year} data: Use SQL if asking about matches/stats through {current_date_str}
-        - Questions about "current" rankings/form: May need BOTH SQL (historical context) AND search (latest updates)
-        - Questions about future events: Use web search
-        - Questions about 2023-{current_year}: Primarily SQL database
+        DECISION FACTORS TO CONSIDER:
+        - If this appears to be a follow-up question, consider the previous conversation context
+        - Whether the query needs historical data, current information, or both
+        - The temporal scope of the information being requested
+        - Whether statistical analysis or real-time updates would better serve the user
+        
+        Use your judgment to determine the optimal data source strategy.
         
         Provide your analysis in the exact JSON format specified in your system prompt.
         Make sure to return ONLY valid JSON without any additional text or explanations.

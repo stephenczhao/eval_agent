@@ -22,15 +22,9 @@ from pathlib import Path
 utils_path = Path(__file__).parent.parent / "utils"
 sys.path.append(str(utils_path))
 
-try:
-    from tavily_search import tavily_search
-    from src.config.settings import TennisConfig
-    from src.config.optimized_prompts import get_optimized_prompt
-except ImportError:
-    # Fallback import paths
-    from utils.tavily_search import tavily_search
-    from config.settings import TennisConfig
-    from config.optimized_prompts import get_optimized_prompt
+from ..utils.tavily_search import tavily_search
+from ..config.settings import TennisConfig
+from ..config.optimized_prompts import get_optimized_prompt
 
 
 def _debug_print(message: str) -> None:
@@ -53,17 +47,17 @@ def optimize_search_query(user_query: str, context: str = "") -> Dict[str, Any]:
     """
     config = TennisConfig()
     
-    try:
-        llm = ChatOpenAI(
-            model=config.default_model,
-            temperature=0.1,
-            max_tokens=200,
-            api_key=config.openai_api_key
-        )
-        
-        # Use optimized search prompt with datetime context from get_optimized_prompt
-        search_prompt = get_optimized_prompt('search')
-        optimization_prompt = f"""Transform this tennis query into effective web search terms:
+
+    llm = ChatOpenAI(
+        model=config.default_model,
+        temperature=0.1,
+        max_tokens=200,
+        api_key=config.openai_api_key
+    )
+    
+    # Use optimized search prompt with datetime context from get_optimized_prompt
+    search_prompt = get_optimized_prompt('search')
+    optimization_prompt = f"""Transform this tennis query into effective web search terms:
 
 USER QUERY: "{user_query}"
 
@@ -82,53 +76,26 @@ STRATEGY:
 
 Generate effective search terms (max 15 words):"""
 
-        response = llm.invoke([
-            SystemMessage(content=search_prompt),
-            HumanMessage(content=optimization_prompt)
-        ])
-        
-        optimized_query = response.content.strip()
-        
-        # Ensure 15-word limit for better search effectiveness
-        words = optimized_query.split()
-        if len(words) > 15:
-            optimized_query = ' '.join(words[:15])
-            _debug_print(f"   ⚠️ Truncated query to 15 words: {optimized_query}")
-        
-        return {
-            "success": True,
-            "optimized_query": optimized_query,
-            "original_query": user_query,
-            "optimization_applied": True,
-            "reasoning": "LLM-optimized search query for tennis domain"
-        }
-        
-    except Exception as e:
-        # Intelligent fallback based on query content
-        query_lower = user_query.lower()
-        
-        if "best player" in query_lower or "number 1" in query_lower or "#1" in query_lower:
-            fallback_query = "current ATP rankings world number 1 tennis latest"
-        elif "last tournament" in query_lower or "latest tournament" in query_lower:
-            fallback_query = "latest tennis tournament winner ATP WTA recent"
-        elif "ranking" in query_lower:
-            fallback_query = "current ATP WTA rankings tennis latest"
-        else:
-            fallback_query = f"tennis latest current {user_query}"
-        
-        # Ensure fallback doesn't exceed 15 words
-        words = fallback_query.split()
-        if len(words) > 15:
-            fallback_query = ' '.join(words[:15])
-        
-        return {
-            "success": True,
-            "optimized_query": fallback_query,
-            "original_query": user_query,
-            "optimization_applied": False,
-            "reasoning": f"Intelligent fallback optimization used: {str(e)}"
-        }
-
+    response = llm.invoke([
+        SystemMessage(content=search_prompt),
+        HumanMessage(content=optimization_prompt)
+    ])
+    
+    optimized_query = response.content.strip()
+    
+    # Ensure 15-word limit for better search effectiveness
+    words = optimized_query.split()
+    if len(words) > 15:
+        optimized_query = ' '.join(words[:15])
+        _debug_print(f"   ⚠️ Truncated query to 15 words: {optimized_query}")
+    
+    return {
+        "success": True,
+        "optimized_query": optimized_query,
+        "original_query": user_query,
+        "optimization_applied": True,
+        "reasoning": "LLM-optimized search query for tennis domain"
+    }
 
 @tool
 def tavily_search_tool(query: str, max_results: int = 10) -> Dict[str, Any]:
@@ -144,38 +111,24 @@ def tavily_search_tool(query: str, max_results: int = 10) -> Dict[str, Any]:
     """
     config = TennisConfig()
     start_time = time.time()
+    raw_results = tavily_search(query)
     
-    try:
-        # Use the existing tavily_search function
-        raw_results = tavily_search(query)
-        
-        execution_time = time.time() - start_time
-        
-        # Structure the results
-        search_results = {
-            "success": True,
-            "query_used": query,
-            "raw_results": raw_results,
-            "execution_time": execution_time,
-            "timestamp": time.time(),
-            "result_count": len(raw_results.get("results", [])),
-            "sources": [result.get("url", "") for result in raw_results.get("results", [])],
-            "error": None
-        }
-        
-        return search_results
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "query_used": query,
-            "raw_results": {},
-            "execution_time": time.time() - start_time,
-            "timestamp": time.time(),
-            "result_count": 0,
-            "sources": [],
-            "error": f"Search failed: {str(e)}"
-        }
+    execution_time = time.time() - start_time
+    
+    # Structure the results
+    search_results = {
+        "success": True,
+        "query_used": query,
+        "raw_results": raw_results,
+        "execution_time": execution_time,
+        "timestamp": time.time(),
+        "result_count": len(raw_results.get("results", [])),
+        "sources": [result.get("url", "") for result in raw_results.get("results", [])],
+        "error": None
+    }
+    
+    return search_results
+
 
 
 @tool
@@ -212,54 +165,41 @@ def interpret_search_results(search_results: Dict[str, Any], user_query: str) ->
             "source_count": 0,
             "has_data": False
         }
+
+    llm = ChatOpenAI(
+        model=config.default_model,
+        temperature=0.2,
+        max_tokens=300,
+        api_key=config.openai_api_key
+    )
     
-    try:
-        llm = ChatOpenAI(
-            model=config.default_model,
-            temperature=0.2,
-            max_tokens=300,
-            api_key=config.openai_api_key
-        )
-        
-        # Create concise results summary for LLM processing
-        results_summary = []
-        for i, result in enumerate(results_list[:5]):  # Limit to first 5 results
-            title = result.get("title", "No title")
-            content = result.get("content", "No content")[:300]  # Limit content length
-            results_summary.append(f"Result {i+1}: {title}\nContent: {content}")
-        
-        results_text = "\n\n".join(results_summary)
-        
-        # Use optimized prompt for interpretation with datetime context
-        search_prompt = get_optimized_prompt('search')
-        interpretation_prompt = f"""USER QUESTION: "{user_query}"\n\nSEARCH RESULTS:\n{results_text}\n\nProvide a factual summary in 2-3 sentences focusing on direct answer, current tennis information, and key facts/figures:"""
+    # Create concise results summary for LLM processing
+    results_summary = []
+    for i, result in enumerate(results_list[:5]):  # Limit to first 5 results
+        title = result.get("title", "No title")
+        content = result.get("content", "No content")[:300]  # Limit content length
+        results_summary.append(f"Result {i+1}: {title}\nContent: {content}")
+    
+    results_text = "\n\n".join(results_summary)
+    
+    # Use optimized prompt for interpretation with datetime context
+    search_prompt = get_optimized_prompt('search')
+    interpretation_prompt = f"""USER QUESTION: "{user_query}"\n\nSEARCH RESULTS:\n{results_text}\n\nProvide a factual summary in 2-3 sentences focusing on direct answer, current tennis information, and key facts/figures:"""
 
-        response = llm.invoke([
-            SystemMessage(content=search_prompt),
-            HumanMessage(content=interpretation_prompt)
-        ])
-        
-        interpretation = response.content.strip()
-        
-        return {
-            "success": True,
-            "interpretation": interpretation,
-            "confidence": 0.8,
-            "source_count": len(results_list),
-            "has_data": True
-        }
-        
-    except Exception as e:
-        # Create fallback interpretation
-        fallback_interpretation = _create_basic_summary(results_list, user_query, str(e))
-        return {
-            "success": True,
-            "interpretation": fallback_interpretation["key_findings"],
-            "confidence": 0.6,
-            "source_count": len(results_list),
-            "has_data": True
-        }
-
+    response = llm.invoke([
+        SystemMessage(content=search_prompt),
+        HumanMessage(content=interpretation_prompt)
+    ])
+    
+    interpretation = response.content.strip()
+    
+    return {
+        "success": True,
+        "interpretation": interpretation,
+        "confidence": 0.8,
+        "source_count": len(results_list),
+        "has_data": True
+    }
 
 @tool
 def online_search(user_query: str, context: str = "") -> Dict[str, Any]:

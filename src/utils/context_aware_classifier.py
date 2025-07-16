@@ -62,10 +62,15 @@ class ContextAwareTennisClassifier:
 
 CURRENT QUERY: "{user_query}"
 
-CLASSIFICATION RULES:
-- Tennis-related: queries about tennis players, matches, tournaments, rankings, techniques, equipment, rules, coaching, statistics
-- Context matters: if previous conversation was about tennis, follow-up questions like "what about men?", "and clay courts?", "who's second?" are tennis-related
-- Be generous with context: if user is continuing a tennis conversation, assume tennis context
+ANALYSIS TASK:
+Consider the context of the conversation and the current query to determine if this is tennis-related.
+
+TENNIS TOPICS INCLUDE:
+- Players, matches, tournaments, rankings, techniques, equipment, rules, coaching, statistics
+- If previous conversation was about tennis, follow-up questions are likely tennis-related
+- Consider the conversational context when making your decision
+
+Use your judgment to classify this query appropriately.
 
 Return JSON:
 {{
@@ -123,14 +128,14 @@ Return JSON:
 
 CURRENT QUERY: "{user_query}"
 
-REFINEMENT RULES:
-- If query is complete and clear, return it as-is
-- If query is incomplete/ambiguous, use context to clarify
-- Examples:
-  * "what about men?" + tennis context → "who's the best men's tennis player?"
-  * "and clay courts?" + player context → "what about [player]'s clay court performance?"
-  * "who's second?" + ranking context → "who's the second-ranked tennis player?"
+REFINEMENT TASK:
+Analyze the query and conversation context to determine if refinement is needed. Consider:
+- If the query is complete and clear, return it as-is
+- If the query is incomplete or ambiguous, use context to clarify the user's intent
+- Use conversation history to resolve unclear references
 - Maintain tennis focus if context suggests tennis
+
+Use your judgment to create the most appropriate refined query.
 
 Return JSON:
 {{
